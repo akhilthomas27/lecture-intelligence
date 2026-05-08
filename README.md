@@ -54,4 +54,4 @@ Secrets are loaded from `.env` files — never hardcoded in source.
 | Variable                     | File                  | Purpose                                |
 | ---------------------------- | --------------------- | -------------------------------------- |
 | `GEMINI_API_KEY`             | `backend/.env`        | Google Gemini API key (required)       |
-| `NEXT_PUBLIC_API_BASE_URL`   | `frontend/.env.local` | Backend base URL (e.g. `http://localhost:8000`) |
+| `NEXT_PUBLIC_API_URL`        | `frontend/.env.local` | Backend base URL (e.g. `http://localhost:8000`) |

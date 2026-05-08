@@ -1,6 +1,3 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
 // ---- Types -----------------------------------------------------------------
 
 export type Status =
@@ -115,7 +112,7 @@ async function ensureOk(res: Response): Promise<Response> {
 export async function submitLecture(
   url: string,
 ): Promise<{ job_id: string; status: string }> {
-  const res = await fetch(`${API_BASE}/api/process`, {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
@@ -124,16 +121,22 @@ export async function submitLecture(
 }
 
 export async function getStatus(jobId: string): Promise<JobStatus> {
-  const res = await fetch(`${API_BASE}/api/status/${jobId}`, {
-    cache: "no-store",
-  });
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/api/status/${jobId}`,
+    {
+      cache: "no-store",
+    },
+  );
   return (await ensureOk(res)).json();
 }
 
 export async function getResults(jobId: string): Promise<ResultsResponse> {
-  const res = await fetch(`${API_BASE}/api/results/${jobId}`, {
-    cache: "no-store",
-  });
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/api/results/${jobId}`,
+    {
+      cache: "no-store",
+    },
+  );
   return (await ensureOk(res)).json();
 }
 
@@ -141,7 +144,7 @@ export async function searchLecture(
   jobId: string,
   query: string,
 ): Promise<SearchResponse> {
-  const res = await fetch(`${API_BASE}/api/search`, {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId, query }),
@@ -153,7 +156,7 @@ export async function translateMaterials(
   jobId: string,
   targetLanguage: string,
 ): Promise<TranslationResponse> {
-  const res = await fetch(`${API_BASE}/api/translate`, {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/translate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId, target_language: targetLanguage }),
