@@ -159,6 +159,7 @@ def _fetch_via_supadata(url: str) -> list[dict[str, Any]]:
     Raises ``_SupadataError`` on any failure mode.
     """
     api_key = os.getenv("SUPADATA_API_KEY")
+    print(f"[supadata] key at request time: {'FOUND' if api_key else 'MISSING'}")
     if not api_key:
         raise _SupadataError(
             "no_api_key",
