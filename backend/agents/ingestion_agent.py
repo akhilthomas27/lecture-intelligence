@@ -1,23 +1,8 @@
 """Ingestion agent.
 
-Takes a YouTube URL, fetches its transcript, and chunks it into ~500-token
-segments while preserving start/end times.
-
-Transcript fetching strategy
-----------------------------
-1. **Official YouTube Data API v3** (when ``YOUTUBE_API_KEY`` is set in env):
-   - ``captions.list`` to discover available caption tracks for the video
-     (this works with just an API key).
-   - ``captions.download`` to fetch the caption content as srv1 XML.
-
-   ⚠️  ``captions.download`` officially **requires OAuth 2.0** — an API key
-   alone returns 403 ("permissions are not sufficient") for nearly all videos
-   the requester does not own. So in practice this path will fail the
-   download step for most public videos and we transparently fall back.
-
-2. **youtube-transcript-api fallback**: scrapes the same internal timedtext
-   endpoint that web players use. Works without authentication for any
-   public video that has captions enabled.
+Fetches a YouTube transcript via the Supadata API
+(https://api.supadata.ai/v1/youtube/transcript) and chunks it into
+~500-token segments while preserving start/end times.
 
 Public API
 ----------
@@ -27,11 +12,10 @@ Public API
 
     extract_video_id(url) -> str
         Helper that parses any common YouTube URL form (or accepts a bare 11-char id).
-        Raises ValueError on unrecognised input.
+        Raises ``ValueError`` on unrecognised input.
 """
 from __future__ import annotations
 
-import html
 import json
 import logging
 import os
@@ -39,21 +23,12 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 from typing import Any
-
-from youtube_transcript_api import (
-    NoTranscriptFound,
-    TranscriptsDisabled,
-    VideoUnavailable,
-    YouTubeTranscriptApi,
-)
 
 logger = logging.getLogger(__name__)
 
 # English text averages ~1.33 tokens per whitespace-separated word for both the
-# OpenAI and Gemini tokenizers. The spec says "roughly 500 tokens", so a
-# word-based heuristic is enough — no need to pull in tiktoken.
+# OpenAI and Gemini tokenizers. The spec says "roughly 500 tokens".
 _TOKENS_PER_WORD = 1.33
 _TARGET_TOKENS = 500
 _TARGET_WORDS = int(_TARGET_TOKENS / _TOKENS_PER_WORD)  # ≈ 376
@@ -64,17 +39,21 @@ _VIDEO_ID_RE = re.compile(
 )
 _BARE_ID_RE = re.compile(r"^[0-9A-Za-z_-]{11}$")
 
-_YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
-_HTTP_TIMEOUT_S = 10.0
+_SUPADATA_ENDPOINT = "https://api.supadata.ai/v1/youtube/transcript"
+_HTTP_TIMEOUT_S = 30.0
 
 
-class _OfficialApiUnavailable(Exception):
-    """Internal sentinel: the official-API path could not produce a transcript.
+class _SupadataError(Exception):
+    """Internal: Supadata couldn't return a usable transcript.
 
-    Raised for any expected failure mode — no captions listed, OAuth-required
-    download error, malformed response, etc. — so the caller can transparently
-    fall back to ``youtube-transcript-api``.
+    Carries an ``error_type`` matching the public error vocabulary so the
+    caller can map it directly into the response dict.
     """
+
+    def __init__(self, error_type: str, message: str) -> None:
+        super().__init__(message)
+        self.error_type = error_type
+        self.message = message
 
 
 # ---------------------------------------------------------------------------
@@ -96,160 +75,6 @@ def extract_video_id(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Transcript fetching: official API → fallback
-# ---------------------------------------------------------------------------
-
-
-def _fetch_transcript(video_id: str) -> list[dict[str, Any]]:
-    """Return ``[{text, start, duration}, ...]`` segments for a video.
-
-    Tries the official YouTube Data API v3 first when ``YOUTUBE_API_KEY`` is
-    set. Any failure on the official path falls back to the
-    youtube-transcript-api scraping path; the latter's exceptions
-    (``VideoUnavailable``, ``TranscriptsDisabled``, ``NoTranscriptFound``,
-    etc.) are allowed to propagate so ``ingest_video`` can map them to clear
-    user-facing errors.
-    """
-    api_key = os.getenv("YOUTUBE_API_KEY")
-    if api_key:
-        try:
-            return _fetch_via_official_api(video_id, api_key)
-        except _OfficialApiUnavailable as exc:
-            logger.info(
-                "Official YouTube API didn't yield captions for %s: %s. "
-                "Falling back to youtube-transcript-api.",
-                video_id,
-                exc,
-            )
-        except Exception as exc:  # noqa: BLE001 — anything unexpected → fall back
-            logger.warning(
-                "Unexpected error in official YouTube API path for %s: %s. "
-                "Falling back to youtube-transcript-api.",
-                video_id,
-                exc,
-            )
-
-    return _fetch_via_youtube_transcript_api(video_id)
-
-
-def _fetch_via_official_api(video_id: str, api_key: str) -> list[dict[str, Any]]:
-    """YouTube Data API v3: ``captions.list`` + ``captions.download``.
-
-    Raises ``_OfficialApiUnavailable`` for any expected failure (no tracks,
-    OAuth required for download, empty body, malformed XML, etc.).
-    """
-    # Step 1: list available caption tracks. Works with just an API key.
-    list_data = _http_get_json(
-        f"{_YOUTUBE_API_BASE}/captions",
-        {"videoId": video_id, "part": "id,snippet", "key": api_key},
-    )
-    items = list_data.get("items", [])
-    if not items:
-        raise _OfficialApiUnavailable(
-            "captions.list returned no caption tracks for this video"
-        )
-
-    track = _pick_caption_track(items)
-    caption_id = track.get("id")
-    if not caption_id:
-        raise _OfficialApiUnavailable("Picked caption track has no id")
-
-    # Step 2: download the caption track.
-    # ⚠️ This call typically returns 403 with just an API key — captions.download
-    # requires OAuth 2.0 for any video the requester doesn't own. The 403 path
-    # raises _OfficialApiUnavailable so we transparently fall back.
-    xml_text = _http_get_text(
-        f"{_YOUTUBE_API_BASE}/captions/{caption_id}",
-        {"tfmt": "srv1", "key": api_key},
-    )
-
-    return _parse_srv1(xml_text)
-
-
-def _pick_caption_track(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pick the best caption track. Prefer English, prefer non-ASR over ASR."""
-    def score(item: dict[str, Any]) -> tuple:
-        snippet = item.get("snippet") or {}
-        language = (snippet.get("language") or "").lower()
-        is_english = language.startswith("en")
-        is_manual = snippet.get("trackKind") != "ASR"
-        return (is_english, is_manual)
-    return max(items, key=score)
-
-
-def _parse_srv1(xml_text: str) -> list[dict[str, Any]]:
-    """Parse YouTube's srv1 XML caption format.
-
-    srv1 looks like::
-
-        <transcript>
-          <text start="0.5" dur="2.3">Hello &amp; welcome</text>
-          ...
-        </transcript>
-    """
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
-        raise _OfficialApiUnavailable(f"Could not parse srv1 XML: {exc}") from exc
-
-    segments: list[dict[str, Any]] = []
-    for elem in root.iter("text"):
-        text = (elem.text or "").strip()
-        if not text:
-            continue
-        try:
-            start = float(elem.get("start", "0"))
-            duration = float(elem.get("dur", "0"))
-        except (TypeError, ValueError):
-            continue
-        text = html.unescape(text).replace("\n", " ").strip()
-        if not text:
-            continue
-        segments.append({"text": text, "start": start, "duration": duration})
-
-    if not segments:
-        raise _OfficialApiUnavailable("Empty transcript from official API")
-    return segments
-
-
-def _fetch_via_youtube_transcript_api(video_id: str) -> list[dict[str, Any]]:
-    """Fallback: scrape via the youtube-transcript-api package."""
-    fetched = YouTubeTranscriptApi().fetch(video_id)
-    return [
-        {"text": s.text, "start": float(s.start), "duration": float(s.duration)}
-        for s in fetched
-    ]
-
-
-# ---------------------------------------------------------------------------
-# HTTP helpers (stdlib so we don't add a dependency for two GETs)
-# ---------------------------------------------------------------------------
-
-
-def _http_get_json(url: str, params: dict[str, str]) -> dict[str, Any]:
-    body = _http_get_text(url, params)
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise _OfficialApiUnavailable(f"Response was not JSON: {exc}") from exc
-
-
-def _http_get_text(url: str, params: dict[str, str]) -> str:
-    full_url = f"{url}?{urllib.parse.urlencode(params)}"
-    try:
-        with urllib.request.urlopen(full_url, timeout=_HTTP_TIMEOUT_S) as resp:
-            return resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        # 403 here is the typical OAuth-required-for-download outcome.
-        raise _OfficialApiUnavailable(
-            f"HTTP {exc.code} from {url}: {body[:200]}"
-        ) from exc
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        raise _OfficialApiUnavailable(f"Network error calling {url}: {exc}") from exc
-
-
-# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -259,11 +84,11 @@ def ingest_video(url: str) -> dict[str, Any]:
 
     Possible ``error_type`` values:
         - ``invalid_url``           the URL didn't contain a recognisable video id
-        - ``video_unavailable``     private, removed, deleted, or doesn't exist
-        - ``age_restricted``        age-restricted; YouTube blocks programmatic access
-        - ``ip_blocked``            YouTube has rate-limited / blocked this IP
+        - ``no_api_key``            ``SUPADATA_API_KEY`` is not set in the environment
+        - ``video_unavailable``     Supadata couldn't access this video (private, removed, blocked)
         - ``transcripts_disabled``  the owner disabled captions on this video
-        - ``no_transcript``         no transcript exists in any available language
+        - ``no_transcript``         no transcript exists for this video
+        - ``rate_limited``          Supadata rate limit hit
         - ``fetch_failed``          any other unexpected failure
     """
     try:
@@ -278,20 +103,172 @@ def ingest_video(url: str) -> dict[str, Any]:
             ),
         }
 
+    # Use a canonical URL so we don't pass through user-specific query params
+    # (?t=, ?list=, &si=…) that may confuse upstream.
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
     try:
-        segments = _fetch_transcript(video_id)
-    except VideoUnavailable:
+        segments = _fetch_via_supadata(canonical_url)
+    except _SupadataError as exc:
+        return _humanize_error(exc.error_type, exc.message, video_id)
+    except Exception as exc:  # noqa: BLE001 — last-resort guard
+        logger.warning("Unexpected ingestion error for %s: %s", video_id, exc)
+        return {
+            "success": False,
+            "error_type": "fetch_failed",
+            "error": f"Failed to fetch transcript for {video_id}: {exc}",
+        }
+
+    chunks = _chunk_segments(segments)
+    return {"success": True, "video_id": video_id, "chunks": chunks}
+
+
+# ---------------------------------------------------------------------------
+# Supadata client
+# ---------------------------------------------------------------------------
+
+
+def _fetch_via_supadata(url: str) -> list[dict[str, Any]]:
+    """Fetch transcript segments from Supadata.
+
+    Returns a list of ``{text, start, duration}`` dicts where ``start`` and
+    ``duration`` are seconds (converted from Supadata's milliseconds).
+    Raises ``_SupadataError`` on any failure mode.
+    """
+    api_key = os.getenv("SUPADATA_API_KEY")
+    if not api_key:
+        raise _SupadataError(
+            "no_api_key",
+            "SUPADATA_API_KEY is not set in the environment.",
+        )
+
+    params = urllib.parse.urlencode({"url": url, "text": "false"})
+    full_url = f"{_SUPADATA_ENDPOINT}?{params}"
+    request = urllib.request.Request(full_url, headers={"x-api-key": api_key})
+
+    try:
+        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_S) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        error_type, message = _classify_http_error(exc.code, body)
+        raise _SupadataError(error_type, message) from exc
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise _SupadataError(
+            "fetch_failed", f"Network error calling Supadata: {exc}"
+        ) from exc
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise _SupadataError(
+            "fetch_failed", f"Supadata returned non-JSON: {exc}"
+        ) from exc
+
+    # Some APIs return HTTP 200 with an error field in the body.
+    if isinstance(data, dict) and "error" in data and "content" not in data:
+        raise _SupadataError(
+            "fetch_failed", f"Supadata error: {data.get('error')}"
+        )
+
+    raw_segments = data.get("content") if isinstance(data, dict) else None
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise _SupadataError(
+            "no_transcript",
+            "Supadata returned no transcript segments for this video.",
+        )
+
+    segments: list[dict[str, Any]] = []
+    for s in raw_segments:
+        if not isinstance(s, dict):
+            continue
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        # offset and duration arrive in milliseconds — convert to seconds.
+        try:
+            offset_ms = float(s.get("offset", 0))
+            duration_ms = float(s.get("duration", 0))
+        except (TypeError, ValueError):
+            continue
+        segments.append(
+            {
+                "text": text,
+                "start": offset_ms / 1000.0,
+                "duration": duration_ms / 1000.0,
+            }
+        )
+
+    if not segments:
+        raise _SupadataError(
+            "no_transcript",
+            "Transcript came back empty after parsing.",
+        )
+    return segments
+
+
+def _classify_http_error(code: int, body: str) -> tuple[str, str]:
+    """Map a Supadata HTTP error response to ``(error_type, message)``."""
+    msg = _extract_error_message(body)
+    lower = msg.lower()
+
+    if code in (401, 403):
+        return "no_api_key", f"Supadata authentication failed: {msg}"
+    if code == 429:
+        return "rate_limited", f"Supadata rate limit hit: {msg}"
+    if code == 404:
+        return "video_unavailable", f"Supadata says the video is unavailable: {msg}"
+    if code in (400, 422):
+        if any(s in lower for s in ("disabled", "captions are off", "captions disabled")):
+            return "transcripts_disabled", msg
+        if any(s in lower for s in ("private", "removed", "not found", "unavailable")):
+            return "video_unavailable", msg
+        if any(s in lower for s in ("no transcript", "transcript not", "not available", "no captions")):
+            return "no_transcript", msg
+        # Default for unknown 4xx — most likely a per-video issue.
+        return "no_transcript", msg
+    return "fetch_failed", f"Supadata HTTP {code}: {msg}"
+
+
+def _extract_error_message(body: str) -> str:
+    """Pull a human-readable error message out of a Supadata error body."""
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return body[:200] or "(empty body)"
+
+    if isinstance(data, dict):
+        # Common shapes: {"message": "..."}, {"error": "..."},
+        # {"error": {"message": "..."}}.
+        if isinstance(data.get("message"), str):
+            return data["message"]
+        err = data.get("error")
+        if isinstance(err, str):
+            return err
+        if isinstance(err, dict) and isinstance(err.get("message"), str):
+            return err["message"]
+    return str(data)[:200]
+
+
+def _humanize_error(error_type: str, message: str, video_id: str) -> dict[str, Any]:
+    """Map a known error_type + raw upstream message to a user-facing response."""
+    if error_type == "no_api_key":
+        return {
+            "success": False,
+            "error_type": "no_api_key",
+            "error": "SUPADATA_API_KEY is not set in the environment.",
+        }
+    if error_type == "video_unavailable":
         return {
             "success": False,
             "error_type": "video_unavailable",
             "error": (
-                f"YouTube says video {video_id} is unavailable. The most common "
+                f"Supadata couldn't access video {video_id}. The most common "
                 "causes are: the video is private or unlisted, it has been "
-                "removed by the uploader, or it never existed at this ID. "
-                "Try a public video instead."
+                "removed by the uploader, or it's blocked in this region."
             ),
         }
-    except TranscriptsDisabled:
+    if error_type == "transcripts_disabled":
         return {
             "success": False,
             "error_type": "transcripts_disabled",
@@ -301,58 +278,30 @@ def ingest_video(url: str) -> dict[str, Any]:
                 "auto-captions enabled."
             ),
         }
-    except NoTranscriptFound:
+    if error_type == "no_transcript":
         return {
             "success": False,
             "error_type": "no_transcript",
             "error": (
-                f"No transcript could be found for video {video_id} in any "
-                "language. The video may be too new for auto-captions, or "
-                "captions may have been generated in an unsupported language."
+                f"No transcript could be found for video {video_id}. "
+                "The video may be too new for auto-captions, or captions may "
+                "have been generated in an unsupported language."
             ),
         }
-    except Exception as exc:  # noqa: BLE001
-        # New-in-1.x exceptions on the youtube-transcript-api fallback path.
-        name = type(exc).__name__
-
-        if name == "AgeRestricted":
-            return {
-                "success": False,
-                "error_type": "age_restricted",
-                "error": (
-                    f"Video {video_id} is age-restricted. YouTube only serves "
-                    "the transcript to authenticated users for these, so we "
-                    "can't access it programmatically."
-                ),
-            }
-        if name in {"IpBlocked", "RequestBlocked", "YouTubeRequestFailed"}:
-            return {
-                "success": False,
-                "error_type": "ip_blocked",
-                "error": (
-                    "YouTube has temporarily blocked requests from this IP "
-                    "address (often happens after many requests in a short "
-                    "window). Try again in a few minutes or from a different "
-                    "network."
-                ),
-            }
-        if name == "VideoUnplayable":
-            return {
-                "success": False,
-                "error_type": "video_unavailable",
-                "error": (
-                    f"YouTube reported video {video_id} as unplayable. It may "
-                    "be region-locked, members-only, or otherwise restricted."
-                ),
-            }
+    if error_type == "rate_limited":
         return {
             "success": False,
-            "error_type": "fetch_failed",
-            "error": f"Failed to fetch transcript for {video_id}: {exc}",
+            "error_type": "rate_limited",
+            "error": (
+                "Supadata rate limit hit. Try again in a minute, or upgrade "
+                "your Supadata plan if this happens often."
+            ),
         }
-
-    chunks = _chunk_segments(segments)
-    return {"success": True, "video_id": video_id, "chunks": chunks}
+    return {
+        "success": False,
+        "error_type": "fetch_failed",
+        "error": f"Failed to fetch transcript for {video_id}: {message}",
+    }
 
 
 # ---------------------------------------------------------------------------

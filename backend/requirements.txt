@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 python-dotenv
-youtube-transcript-api
 langchain
 langchain-google-genai
 langgraph
