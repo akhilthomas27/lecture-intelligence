@@ -41,7 +41,13 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-if os.getenv("SUPADATA_API_KEY"):
+# Read the API key once at import time and cache it for the life of the
+# process. Every request reads this constant instead of re-querying
+# os.environ — cheaper, and makes it impossible for a key to "appear"
+# mid-process without a restart (which is the actual deployment contract).
+SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
+
+if SUPADATA_API_KEY:
     print("[ingestion_agent] SUPADATA_API_KEY: found in environment ✓")
 else:
     print(
@@ -158,8 +164,7 @@ def _fetch_via_supadata(url: str) -> list[dict[str, Any]]:
     ``duration`` are seconds (converted from Supadata's milliseconds).
     Raises ``_SupadataError`` on any failure mode.
     """
-    api_key = os.getenv("SUPADATA_API_KEY")
-    print(f"[supadata] key at request time: {'FOUND' if api_key else 'MISSING'}")
+    api_key = SUPADATA_API_KEY  # module-level constant, cached at import
     if not api_key:
         raise _SupadataError(
             "no_api_key",
