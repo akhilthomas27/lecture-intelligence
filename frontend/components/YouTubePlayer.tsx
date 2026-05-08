@@ -1,7 +1,10 @@
 "use client";
 
 import { forwardRef, useImperativeHandle, useRef } from "react";
-import YouTube, { type YouTubePlayer as YTPlayer } from "react-youtube";
+import YouTube, {
+  type YouTubeEvent,
+  type YouTubePlayer as YTPlayer,
+} from "react-youtube";
 
 export interface YouTubePlayerHandle {
   /** Seek to ``seconds`` and start playback. */
@@ -38,7 +41,7 @@ const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(
             height: "100%",
             playerVars: { rel: 0, modestbranding: 1 },
           }}
-          onReady={(e) => {
+          onReady={(e: YouTubeEvent) => {
             playerRef.current = e.target;
           }}
           className="absolute inset-0"
