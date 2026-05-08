@@ -1,51 +1,68 @@
 """Search agent.
 
-Uses sentence-transformers (``all-MiniLM-L6-v2``) for local embeddings and
-ChromaDB (in-memory) for vector search. No API keys required.
+Uses Google's ``gemini-embedding-001`` model (via ``google-generativeai``) for
+embeddings, and ChromaDB (in-memory) for vector search. Requires
+``GEMINI_API_KEY`` to be set in the environment.
+
+Why ``gemini-embedding-001`` instead of a local sentence-transformers model:
+the Google API saves us the ~700 MB PyTorch dependency and the ~80 MB model
+download, at the cost of one network round-trip per embedding batch (and
+the same key already used for Gemini chat).
 
 Public API
 ----------
     index_chunks(video_id, chunks) -> dict
-        Embed the chunks and upsert them into a ChromaDB collection named
-        after the ``video_id``. Returns a success/error dict matching the
-        convention used by the other agents.
+        Embed the chunks (using task_type=RETRIEVAL_DOCUMENT) and upsert
+        them into a ChromaDB collection named after the ``video_id``.
 
     search(video_id, query, top_k=3) -> list[dict]
-        Returns the top_k most similar chunks for ``query`` as
-        ``[{"text", "start_time", "similarity_score"}, ...]``,
-        ordered most-similar-first. Raises ``LookupError`` if the video
-        hasn't been indexed yet, or ``ValueError`` if ``query`` is empty.
+        Embed the query (using task_type=RETRIEVAL_QUERY) and return the
+        top_k most similar chunks as
+        ``[{"text", "start_time", "similarity_score"}, ...]``.
 """
 from __future__ import annotations
 
+import os
 from threading import Lock
 from typing import Any
 
 import chromadb
-from sentence_transformers import SentenceTransformer
+from google import genai
 
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_TOP_K = 3
 
-# Lazy singletons. The model download (~80 MB) and load happen on first use,
-# not at import time, so unrelated tests / scripts don't pay the cost.
-_model_lock = Lock()
-_model: SentenceTransformer | None = None
+# gemini-embedding-001 accepts up to 100 inputs per call; we batch to be safe
+# for long lectures while keeping round-trips small.
+_EMBED_BATCH_SIZE = 100
 
+# task_type values: tagging documents and queries differently improves
+# retrieval quality. See https://ai.google.dev/gemini-api/docs/embeddings
+_TASK_DOCUMENT = "RETRIEVAL_DOCUMENT"
+_TASK_QUERY = "RETRIEVAL_QUERY"
+
+# google-generativeai requires a single global configure() call per process.
+_config_lock = Lock()
+_configured = False
+
+# ChromaDB client is also a process-wide singleton.
 _client_lock = Lock()
-_client: Any = None  # chromadb client; type kept loose for cross-version compat.
+_client: Any = None
 
 
-def _get_model() -> SentenceTransformer:
-    global _model
-    with _model_lock:
-        if _model is None:
-            _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    return _model
+def _ensure_configured() -> None:
+    global _configured
+    with _config_lock:
+        if _configured:
+            return
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set in the environment")
+        genai.configure(api_key=api_key)
+        _configured = True
 
 
 def _get_client() -> Any:
-    """Return a process-wide in-memory ChromaDB client."""
     global _client
     with _client_lock:
         if _client is None:
@@ -54,20 +71,37 @@ def _get_client() -> Any:
 
 
 def _collection_name(video_id: str) -> str:
-    """Build a ChromaDB-safe collection name from a YouTube video id.
-
-    ChromaDB requires: 3-63 chars, alphanumeric + ``_`` + ``-``, must start
-    and end with an alphanumeric character. YouTube ids are 11 chars in
-    ``[A-Za-z0-9_-]`` and may start or end with ``_`` or ``-``, so we sandwich
-    the id between fixed prefix/suffix to guarantee valid endpoints.
-    """
+    """ChromaDB requires names to start/end with alphanumerics; YouTube ids
+    can begin or end with ``-``/``_``, so wrap with fixed prefix/suffix."""
     return f"lecture_{video_id}_chunks"
 
 
-def _embed(texts: list[str]) -> list[list[float]]:
-    model = _get_model()
-    vectors = model.encode(texts, show_progress_bar=False)
-    return vectors.tolist()
+def _embed_documents(texts: list[str]) -> list[list[float]]:
+    """Embed many documents using ``RETRIEVAL_DOCUMENT`` task type."""
+    _ensure_configured()
+    out: list[list[float]] = []
+    for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+        batch = texts[i : i + _EMBED_BATCH_SIZE]
+        result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            content=batch,
+            task_type=_TASK_DOCUMENT,
+        )
+        # When ``content`` is a list, ``embedding`` is a list of lists.
+        out.extend(result["embedding"])
+    return out
+
+
+def _embed_query(text: str) -> list[float]:
+    """Embed a single query using ``RETRIEVAL_QUERY`` task type."""
+    _ensure_configured()
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        content=text,
+        task_type=_TASK_QUERY,
+    )
+    # When ``content`` is a single string, ``embedding`` is a flat list.
+    return result["embedding"]
 
 
 def index_chunks(video_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -76,7 +110,8 @@ def index_chunks(video_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     Possible ``error_type`` values:
         - ``no_video_id``       ``video_id`` is empty
         - ``no_chunks``         ``chunks`` is empty
-        - ``embedding_failed``  sentence-transformers blew up
+        - ``no_api_key``        ``GEMINI_API_KEY`` is not set in the environment
+        - ``embedding_failed``  Gemini embedding call blew up
         - ``store_failed``      ChromaDB upsert blew up
     """
     if not video_id:
@@ -91,9 +126,15 @@ def index_chunks(video_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
             "error_type": "no_chunks",
             "error": "No chunks to index.",
         }
+    if not os.getenv("GEMINI_API_KEY"):
+        return {
+            "success": False,
+            "error_type": "no_api_key",
+            "error": "GEMINI_API_KEY is not set in the environment.",
+        }
 
     try:
-        embeddings = _embed([c["text"] for c in chunks])
+        embeddings = _embed_documents([c["text"] for c in chunks])
     except Exception as exc:  # noqa: BLE001
         return {
             "success": False,
@@ -104,8 +145,8 @@ def index_chunks(video_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     name = _collection_name(video_id)
     try:
         client = _get_client()
-        # Use cosine space so that distance ∈ [0, 2] and similarity = 1 - distance
-        # is in a familiar [-1, 1] range (and ~[0, 1] for typical text).
+        # Use cosine space so distance ∈ [0, 2] and similarity = 1 - distance
+        # is in a familiar [-1, 1] range (≈[0, 1] for typical text).
         collection = client.get_or_create_collection(
             name=name,
             metadata={"hnsw:space": "cosine"},
@@ -150,8 +191,8 @@ def search(
 
     Raises:
         ValueError: ``query`` is empty or whitespace-only.
-        LookupError: no collection exists for this ``video_id`` — call
-            ``index_chunks`` first.
+        LookupError: no collection exists for this ``video_id``.
+        RuntimeError: ``GEMINI_API_KEY`` is missing.
     """
     if not query or not query.strip():
         raise ValueError("query is empty")
@@ -166,7 +207,7 @@ def search(
             "Call index_chunks() first."
         ) from exc
 
-    query_embedding = _embed([query])[0]
+    query_embedding = _embed_query(query)
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=top_k,

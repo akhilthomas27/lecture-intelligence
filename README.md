@@ -6,7 +6,7 @@ Full-stack app for turning YouTube lectures into structured study material — o
 
 - **Backend:** FastAPI (Python)
 - **Frontend:** Next.js 14 (App Router) + TypeScript + Tailwind CSS
-- **Planned:** LangGraph orchestration, Google Gemini, sentence-transformers, ChromaDB
+- **Planned:** LangGraph orchestration, Google Gemini, Google gemini-embedding-001, ChromaDB
 
 ## Repo layout
 
