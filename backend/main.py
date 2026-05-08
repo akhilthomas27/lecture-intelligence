@@ -117,6 +117,16 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ping")
+async def ping() -> dict[str, bool]:
+    """Lightweight liveness endpoint for UptimeRobot keep-warm pings.
+
+    Intentionally NOT rate-limited — UptimeRobot's free plan pings every
+    5 minutes (12/hour), which would trip the 10/hour cap on /api/* routes.
+    """
+    return {"pong": True}
+
+
 @app.post("/api/process")
 @limiter.limit("10/hour")
 async def process(
