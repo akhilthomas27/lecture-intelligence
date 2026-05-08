@@ -25,7 +25,30 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from dotenv import load_dotenv
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Startup: load .env (local dev) and report whether SUPADATA_API_KEY is set.
+#
+# load_dotenv() is idempotent — it's also called from main.py before this
+# module is imported, but calling it again here means a tool importing the
+# agent in isolation (e.g. a script, REPL, or pytest) still picks up the
+# .env file. In production, env vars are injected by the host and there's
+# no .env file; load_dotenv() silently does nothing.
+# ---------------------------------------------------------------------------
+
+load_dotenv()
+
+if os.getenv("SUPADATA_API_KEY"):
+    print("[ingestion_agent] SUPADATA_API_KEY: found in environment ✓")
+else:
+    print(
+        "[ingestion_agent] SUPADATA_API_KEY: NOT FOUND — transcript fetching "
+        "will fail. Set it in backend/.env for local dev, or in your hosting "
+        "provider's environment for production."
+    )
 
 # English text averages ~1.33 tokens per whitespace-separated word for both the
 # OpenAI and Gemini tokenizers. The spec says "roughly 500 tokens".
