@@ -24,5 +24,7 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false           # secret — set manually in the Render dashboard
+      - key: SUPADATA_API_KEY
+        sync: false           # secret — set manually in the Render dashboard
       - key: PYTHON_VERSION
         value: "3.11"
