@@ -1,10 +1,10 @@
 # Load .env BEFORE any other imports.
 #
-# agents/ingestion_agent.py captures SUPADATA_API_KEY into a module-level
-# constant on import, so load_dotenv() must already have populated os.environ
-# by the time the agents package is imported below. Putting this anywhere
-# else in the file silently breaks local dev (the constant becomes None even
-# though the .env file is present).
+# agents/ingestion_agent.py captures PROXY_HOST / PROXY_PORT / PROXY_USER /
+# PROXY_PASS into module-level constants on import, so load_dotenv() must
+# already have populated os.environ by the time the agents package is
+# imported below. Putting this anywhere else in the file silently breaks
+# local dev (the constants become None even though the .env file is present).
 from dotenv import load_dotenv
 
 load_dotenv()

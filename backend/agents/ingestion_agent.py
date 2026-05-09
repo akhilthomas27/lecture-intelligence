@@ -1,8 +1,14 @@
 """Ingestion agent.
 
-Fetches a YouTube transcript via the Supadata API
-(https://api.supadata.ai/v1/youtube/transcript) and chunks it into
+Fetches a YouTube transcript via ``youtube-transcript-api``, optionally
+routed through an authenticated HTTP proxy, and chunks the result into
 ~500-token segments while preserving start/end times.
+
+Why a proxy: most cloud hosts (Render, Fly, etc.) sit on IP ranges that
+YouTube aggressively rate-limits or blocks. Setting ``PROXY_HOST/PORT/USER/PASS``
+in the environment routes the request through a residential / data-center
+proxy that YouTube will actually serve. For local dev, leave the proxy vars
+unset and we'll call YouTube directly.
 
 Public API
 ----------
@@ -16,78 +22,93 @@ Public API
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any
 
 from dotenv import load_dotenv
+from youtube_transcript_api import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    VideoUnavailable,
+    YouTubeTranscriptApi,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Startup: load .env (local dev) and report whether SUPADATA_API_KEY is set.
-#
-# load_dotenv() is idempotent — it's also called from main.py before this
-# module is imported, but calling it again here means a tool importing the
-# agent in isolation (e.g. a script, REPL, or pytest) still picks up the
-# .env file. In production, env vars are injected by the host and there's
-# no .env file; load_dotenv() silently does nothing.
+# Startup: load .env (local dev) and capture proxy credentials once.
 # ---------------------------------------------------------------------------
 
 load_dotenv()
 
-# Read the API key once at import time and cache it for the life of the
-# process. Every request reads this constant instead of re-querying
-# os.environ — cheaper, and makes it impossible for a key to "appear"
-# mid-process without a restart (which is the actual deployment contract).
-SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
+# Read proxy credentials at import time and cache them. Re-querying os.environ
+# per request is pointless — env vars are fixed for the life of the process.
+PROXY_HOST = os.getenv("PROXY_HOST")
+PROXY_PORT = os.getenv("PROXY_PORT")
+PROXY_USER = os.getenv("PROXY_USER")
+PROXY_PASS = os.getenv("PROXY_PASS")
 
-if SUPADATA_API_KEY:
-    print("[ingestion_agent] SUPADATA_API_KEY: found in environment ✓")
-else:
+_PROXY_CONFIGURED = all([PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS])
+
+if _PROXY_CONFIGURED:
     print(
-        "[ingestion_agent] SUPADATA_API_KEY: NOT FOUND — transcript fetching "
-        "will fail. Set it in backend/.env for local dev, or in your hosting "
-        "provider's environment for production."
+        f"[ingestion_agent] Proxy: configured "
+        f"({PROXY_USER}@{PROXY_HOST}:{PROXY_PORT})"
     )
+else:
+    missing = [
+        name
+        for name, val in (
+            ("PROXY_HOST", PROXY_HOST),
+            ("PROXY_PORT", PROXY_PORT),
+            ("PROXY_USER", PROXY_USER),
+            ("PROXY_PASS", PROXY_PASS),
+        )
+        if not val
+    ]
+    if missing == ["PROXY_HOST", "PROXY_PORT", "PROXY_USER", "PROXY_PASS"]:
+        print(
+            "[ingestion_agent] Proxy: NOT configured — calling YouTube directly. "
+            "OK for local dev; set PROXY_HOST/PORT/USER/PASS in production."
+        )
+    else:
+        print(
+            "[ingestion_agent] Proxy: PARTIALLY configured — missing "
+            f"{', '.join(missing)}. Falling back to direct calls."
+        )
 
-# English text averages ~1.33 tokens per whitespace-separated word for both the
+
+# Build the proxies dict once. ``None`` means "no proxy, call YouTube directly".
+_PROXIES: dict[str, str] | None = (
+    {
+        "http": f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
+        "https": f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
+    }
+    if _PROXY_CONFIGURED
+    else None
+)
+
+
+# ---------------------------------------------------------------------------
+# Chunking config
+# ---------------------------------------------------------------------------
+
+# English text averages ~1.33 tokens per whitespace-separated word for the
 # OpenAI and Gemini tokenizers. The spec says "roughly 500 tokens".
 _TOKENS_PER_WORD = 1.33
 _TARGET_TOKENS = 500
 _TARGET_WORDS = int(_TARGET_TOKENS / _TOKENS_PER_WORD)  # ≈ 376
 
-# Matches the 11-char video id in any common YouTube URL form.
+# ---------------------------------------------------------------------------
+# URL parsing
+# ---------------------------------------------------------------------------
+
 _VIDEO_ID_RE = re.compile(
     r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/|/live/)([0-9A-Za-z_-]{11})"
 )
 _BARE_ID_RE = re.compile(r"^[0-9A-Za-z_-]{11}$")
-
-_SUPADATA_ENDPOINT = "https://api.supadata.ai/v1/youtube/transcript"
-_HTTP_TIMEOUT_S = 30.0
-
-
-class _SupadataError(Exception):
-    """Internal: Supadata couldn't return a usable transcript.
-
-    Carries an ``error_type`` matching the public error vocabulary so the
-    caller can map it directly into the response dict.
-    """
-
-    def __init__(self, error_type: str, message: str) -> None:
-        super().__init__(message)
-        self.error_type = error_type
-        self.message = message
-
-
-# ---------------------------------------------------------------------------
-# URL parsing
-# ---------------------------------------------------------------------------
 
 
 def extract_video_id(url: str) -> str:
@@ -113,11 +134,11 @@ def ingest_video(url: str) -> dict[str, Any]:
 
     Possible ``error_type`` values:
         - ``invalid_url``           the URL didn't contain a recognisable video id
-        - ``no_api_key``            ``SUPADATA_API_KEY`` is not set in the environment
-        - ``video_unavailable``     Supadata couldn't access this video (private, removed, blocked)
+        - ``video_unavailable``     private / removed / region-blocked / age-restricted
         - ``transcripts_disabled``  the owner disabled captions on this video
         - ``no_transcript``         no transcript exists for this video
-        - ``rate_limited``          Supadata rate limit hit
+        - ``ip_blocked``            YouTube blocked the (proxy or local) IP
+        - ``proxy_error``           configured proxy could not be reached
         - ``fetch_failed``          any other unexpected failure
     """
     try:
@@ -132,204 +153,115 @@ def ingest_video(url: str) -> dict[str, Any]:
             ),
         }
 
-    # Use a canonical URL so we don't pass through user-specific query params
-    # (?t=, ?list=, &si=…) that may confuse upstream.
-    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
-
     try:
-        segments = _fetch_via_supadata(canonical_url)
-    except _SupadataError as exc:
-        return _humanize_error(exc.error_type, exc.message, video_id)
-    except Exception as exc:  # noqa: BLE001 — last-resort guard
-        logger.warning("Unexpected ingestion error for %s: %s", video_id, exc)
+        # youtube-transcript-api 0.6.x: static method, accepts ``proxies`` dict
+        # passed straight to ``requests``. Pass ``proxies=None`` and it just
+        # behaves like a normal direct call.
+        if _PROXIES:
+            transcript = YouTubeTranscriptApi.get_transcript(
+                video_id, proxies=_PROXIES
+            )
+        else:
+            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+    except VideoUnavailable:
         return {
             "success": False,
-            "error_type": "fetch_failed",
-            "error": f"Failed to fetch transcript for {video_id}: {exc}",
+            "error_type": "video_unavailable",
+            "error": (
+                f"YouTube says video {video_id} is unavailable. The video may "
+                "be private, removed, region-blocked, or doesn't exist."
+            ),
         }
+    except TranscriptsDisabled:
+        return {
+            "success": False,
+            "error_type": "transcripts_disabled",
+            "error": (
+                f"The owner of video {video_id} has disabled captions, so we "
+                "can't fetch a transcript."
+            ),
+        }
+    except NoTranscriptFound:
+        return {
+            "success": False,
+            "error_type": "no_transcript",
+            "error": (
+                f"No transcript could be found for video {video_id} in any "
+                "available language."
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return _classify_unexpected_error(video_id, exc)
+
+    segments = [
+        {
+            "text": seg["text"],
+            "start": float(seg["start"]),
+            "duration": float(seg.get("duration", 0)),
+        }
+        for seg in transcript
+        if seg.get("text", "").strip()
+    ]
 
     chunks = _chunk_segments(segments)
     return {"success": True, "video_id": video_id, "chunks": chunks}
 
 
 # ---------------------------------------------------------------------------
-# Supadata client
+# Error classification (for everything ``youtube-transcript-api`` doesn't
+# expose as a typed exception)
 # ---------------------------------------------------------------------------
 
 
-def _fetch_via_supadata(url: str) -> list[dict[str, Any]]:
-    """Fetch transcript segments from Supadata.
+def _classify_unexpected_error(video_id: str, exc: Exception) -> dict[str, Any]:
+    """Map an unexpected exception into our public error_type vocabulary.
 
-    Returns a list of ``{text, start, duration}`` dicts where ``start`` and
-    ``duration`` are seconds (converted from Supadata's milliseconds).
-    Raises ``_SupadataError`` on any failure mode.
+    youtube-transcript-api raises ``IpBlocked`` / ``RequestBlocked`` /
+    ``AgeRestricted`` etc. only in certain versions, so we route by class
+    name rather than importing them eagerly. Proxy connection failures
+    bubble up from ``requests`` as ``ProxyError`` / ``ConnectionError``.
     """
-    api_key = SUPADATA_API_KEY  # module-level constant, cached at import
-    if not api_key:
-        raise _SupadataError(
-            "no_api_key",
-            "SUPADATA_API_KEY is not set in the environment.",
-        )
+    name = type(exc).__name__
+    msg = str(exc)
+    msg_lower = msg.lower()
 
-    params = urllib.parse.urlencode({"url": url, "text": "false"})
-    full_url = f"{_SUPADATA_ENDPOINT}?{params}"
-    request = urllib.request.Request(full_url, headers={"x-api-key": api_key})
-
-    try:
-        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_S) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        error_type, message = _classify_http_error(exc.code, body)
-        raise _SupadataError(error_type, message) from exc
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        raise _SupadataError(
-            "fetch_failed", f"Network error calling Supadata: {exc}"
-        ) from exc
-
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise _SupadataError(
-            "fetch_failed", f"Supadata returned non-JSON: {exc}"
-        ) from exc
-
-    # Some APIs return HTTP 200 with an error field in the body.
-    if isinstance(data, dict) and "error" in data and "content" not in data:
-        raise _SupadataError(
-            "fetch_failed", f"Supadata error: {data.get('error')}"
-        )
-
-    raw_segments = data.get("content") if isinstance(data, dict) else None
-    if not isinstance(raw_segments, list) or not raw_segments:
-        raise _SupadataError(
-            "no_transcript",
-            "Supadata returned no transcript segments for this video.",
-        )
-
-    segments: list[dict[str, Any]] = []
-    for s in raw_segments:
-        if not isinstance(s, dict):
-            continue
-        text = (s.get("text") or "").strip()
-        if not text:
-            continue
-        # offset and duration arrive in milliseconds — convert to seconds.
-        try:
-            offset_ms = float(s.get("offset", 0))
-            duration_ms = float(s.get("duration", 0))
-        except (TypeError, ValueError):
-            continue
-        segments.append(
-            {
-                "text": text,
-                "start": offset_ms / 1000.0,
-                "duration": duration_ms / 1000.0,
-            }
-        )
-
-    if not segments:
-        raise _SupadataError(
-            "no_transcript",
-            "Transcript came back empty after parsing.",
-        )
-    return segments
-
-
-def _classify_http_error(code: int, body: str) -> tuple[str, str]:
-    """Map a Supadata HTTP error response to ``(error_type, message)``."""
-    msg = _extract_error_message(body)
-    lower = msg.lower()
-
-    if code in (401, 403):
-        return "no_api_key", f"Supadata authentication failed: {msg}"
-    if code == 429:
-        return "rate_limited", f"Supadata rate limit hit: {msg}"
-    if code == 404:
-        return "video_unavailable", f"Supadata says the video is unavailable: {msg}"
-    if code in (400, 422):
-        if any(s in lower for s in ("disabled", "captions are off", "captions disabled")):
-            return "transcripts_disabled", msg
-        if any(s in lower for s in ("private", "removed", "not found", "unavailable")):
-            return "video_unavailable", msg
-        if any(s in lower for s in ("no transcript", "transcript not", "not available", "no captions")):
-            return "no_transcript", msg
-        # Default for unknown 4xx — most likely a per-video issue.
-        return "no_transcript", msg
-    return "fetch_failed", f"Supadata HTTP {code}: {msg}"
-
-
-def _extract_error_message(body: str) -> str:
-    """Pull a human-readable error message out of a Supadata error body."""
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        return body[:200] or "(empty body)"
-
-    if isinstance(data, dict):
-        # Common shapes: {"message": "..."}, {"error": "..."},
-        # {"error": {"message": "..."}}.
-        if isinstance(data.get("message"), str):
-            return data["message"]
-        err = data.get("error")
-        if isinstance(err, str):
-            return err
-        if isinstance(err, dict) and isinstance(err.get("message"), str):
-            return err["message"]
-    return str(data)[:200]
-
-
-def _humanize_error(error_type: str, message: str, video_id: str) -> dict[str, Any]:
-    """Map a known error_type + raw upstream message to a user-facing response."""
-    if error_type == "no_api_key":
+    if name in {"IpBlocked", "RequestBlocked", "YouTubeRequestFailed"}:
         return {
             "success": False,
-            "error_type": "no_api_key",
-            "error": "SUPADATA_API_KEY is not set in the environment.",
+            "error_type": "ip_blocked",
+            "error": (
+                "YouTube has blocked requests from "
+                + ("the proxy IP" if _PROXIES else "this IP")
+                + ". Rotate the proxy credentials or wait before retrying."
+            ),
         }
-    if error_type == "video_unavailable":
+    if name == "AgeRestricted":
         return {
             "success": False,
             "error_type": "video_unavailable",
             "error": (
-                f"Supadata couldn't access video {video_id}. The most common "
-                "causes are: the video is private or unlisted, it has been "
-                "removed by the uploader, or it's blocked in this region."
+                f"Video {video_id} is age-restricted. YouTube only serves the "
+                "transcript to authenticated users for these."
             ),
         }
-    if error_type == "transcripts_disabled":
+    if name in {"ProxyError", "ProxySchemeUnknown"} or (
+        _PROXIES and ("proxy" in msg_lower or "tunnel" in msg_lower)
+    ):
         return {
             "success": False,
-            "error_type": "transcripts_disabled",
+            "error_type": "proxy_error",
             "error": (
-                f"The owner of video {video_id} has disabled captions, so we "
-                "can't fetch a transcript. Pick a video that has subtitles or "
-                "auto-captions enabled."
+                f"Could not reach the proxy at {PROXY_HOST}:{PROXY_PORT}. "
+                "Check PROXY_HOST/PORT/USER/PASS env vars and that the proxy "
+                f"endpoint is reachable. Detail: {exc}"
             ),
         }
-    if error_type == "no_transcript":
-        return {
-            "success": False,
-            "error_type": "no_transcript",
-            "error": (
-                f"No transcript could be found for video {video_id}. "
-                "The video may be too new for auto-captions, or captions may "
-                "have been generated in an unsupported language."
-            ),
-        }
-    if error_type == "rate_limited":
-        return {
-            "success": False,
-            "error_type": "rate_limited",
-            "error": (
-                "Supadata rate limit hit. Try again in a minute, or upgrade "
-                "your Supadata plan if this happens often."
-            ),
-        }
+
+    logger.warning("Unexpected ingestion error for %s: %s", video_id, exc)
     return {
         "success": False,
         "error_type": "fetch_failed",
-        "error": f"Failed to fetch transcript for {video_id}: {message}",
+        "error": f"Failed to fetch transcript for {video_id}: {exc}",
     }
 
 
@@ -339,7 +271,11 @@ def _humanize_error(error_type: str, message: str, video_id: str) -> dict[str, A
 
 
 def _chunk_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate raw transcript segments into ~500-token chunks, keeping timestamps."""
+    """Aggregate raw transcript segments into ~500-token chunks, keeping timestamps.
+
+    A chunk's ``start_time`` is the start of its first included segment;
+    ``end_time`` is the end (start + duration) of its last included segment.
+    """
     chunks: list[dict[str, Any]] = []
     buf_words: list[str] = []
     buf_start: float | None = None

@@ -5,12 +5,17 @@
 #   2. In the Render dashboard: New + → Blueprint → connect this repo.
 #   3. When prompted, set the root directory to `backend` (so Render finds
 #      this file and runs commands from inside the backend folder).
-#   4. Set GEMINI_API_KEY in the dashboard — it is intentionally NOT
-#      committed (`sync: false` below).
+#   4. Render will prompt for every env var marked `sync: false` below —
+#      paste each secret in the dashboard. Values are never committed to git.
 #
-# Note: sentence-transformers pulls in PyTorch (~700 MB) and
-# chromadb is also heavy, so the build is slow and memory-tight on the
-# free plan. Bump to `starter` if you hit OOM at startup.
+# Required secrets (paste at deploy time):
+#   - GEMINI_API_KEY     — Google Gemini API key (used by curriculum,
+#                          translation, and embedding agents)
+#   - PROXY_HOST/PORT/USER/PASS — authenticated HTTP proxy used by the
+#                          ingestion agent to reach YouTube. Required because
+#                          Render's IP ranges are aggressively rate-limited
+#                          by YouTube; without a proxy, transcript fetches
+#                          will fail with `ip_blocked`.
 
 services:
   - type: web
@@ -18,8 +23,18 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-      - key: SUPADATA_API_KEY
+      - key: PROXY_HOST
         sync: false
+      - key: PROXY_PORT
+        sync: false
+      - key: PROXY_USER
+        sync: false
+      - key: PROXY_PASS
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11"
