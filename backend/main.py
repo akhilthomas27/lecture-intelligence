@@ -1,22 +1,30 @@
-import asyncio
-from typing import Any
-from uuid import uuid4
-
+# Load .env BEFORE any other imports.
+#
+# agents/ingestion_agent.py captures SUPADATA_API_KEY into a module-level
+# constant on import, so load_dotenv() must already have populated os.environ
+# by the time the agents package is imported below. Putting this anywhere
+# else in the file silently breaks local dev (the constant becomes None even
+# though the .env file is present).
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
-
-import jobs
-from agents.ingestion_agent import extract_video_id
-from agents.search_agent import search as search_chunks
-from agents.translation_agent import translate_materials
-from orchestrator import lecture_graph
 
 load_dotenv()
+
+import asyncio  # noqa: E402
+from typing import Any  # noqa: E402
+from uuid import uuid4  # noqa: E402
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
+from slowapi import Limiter, _rate_limit_exceeded_handler  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+from slowapi.util import get_remote_address  # noqa: E402
+
+import jobs  # noqa: E402
+from agents.ingestion_agent import extract_video_id  # noqa: E402
+from agents.search_agent import search as search_chunks  # noqa: E402
+from agents.translation_agent import translate_materials  # noqa: E402
+from orchestrator import lecture_graph  # noqa: E402
 
 app = FastAPI(title="Lecture Intelligence API")
 
