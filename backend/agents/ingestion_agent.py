@@ -1,6 +1,6 @@
 """Ingestion agent.
 
-Fetches a YouTube transcript via ``youtube-transcript-api``, optionally
+Fetches a YouTube transcript via ``youtube-transcript-api`` (1.x), optionally
 routed through an authenticated HTTP proxy, and chunks the result into
 ~500-token segments while preserving start/end times.
 
@@ -9,6 +9,10 @@ YouTube aggressively rate-limits or blocks. Setting ``PROXY_HOST/PORT/USER/PASS`
 in the environment routes the request through a residential / data-center
 proxy that YouTube will actually serve. For local dev, leave the proxy vars
 unset and we'll call YouTube directly.
+
+API note: this targets ``youtube-transcript-api >= 1.0``. The older 0.6.x
+``get_transcript(video_id, proxies={...})`` static method is gone; the 1.x
+flow is ``YouTubeTranscriptApi(proxy_config=...).fetch(video_id)``.
 
 Public API
 ----------
@@ -34,6 +38,7 @@ from youtube_transcript_api import (
     VideoUnavailable,
     YouTubeTranscriptApi,
 )
+from youtube_transcript_api.proxies import GenericProxyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +48,6 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Read proxy credentials at import time and cache them. Re-querying os.environ
-# per request is pointless — env vars are fixed for the life of the process.
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = os.getenv("PROXY_PORT")
 PROXY_USER = os.getenv("PROXY_USER")
@@ -80,15 +83,21 @@ else:
         )
 
 
-# Build the proxies dict once. ``None`` means "no proxy, call YouTube directly".
-_PROXIES: dict[str, str] | None = (
-    {
-        "http": f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
-        "https": f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
-    }
-    if _PROXY_CONFIGURED
-    else None
-)
+# Build the API client once. With a proxy_config, every fetch routes through
+# the proxy. Without one, fetches go direct.
+def _build_api() -> YouTubeTranscriptApi:
+    if not _PROXY_CONFIGURED:
+        return YouTubeTranscriptApi()
+    proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+    return YouTubeTranscriptApi(
+        proxy_config=GenericProxyConfig(
+            http_url=proxy_url,
+            https_url=proxy_url,
+        ),
+    )
+
+
+_api = _build_api()
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +143,7 @@ def ingest_video(url: str) -> dict[str, Any]:
 
     Possible ``error_type`` values:
         - ``invalid_url``           the URL didn't contain a recognisable video id
-        - ``video_unavailable``     private / removed / region-blocked / age-restricted
+        - ``video_unavailable``     private / removed / age-restricted / region-blocked
         - ``transcripts_disabled``  the owner disabled captions on this video
         - ``no_transcript``         no transcript exists for this video
         - ``ip_blocked``            YouTube blocked the (proxy or local) IP
@@ -154,15 +163,9 @@ def ingest_video(url: str) -> dict[str, Any]:
         }
 
     try:
-        # youtube-transcript-api 0.6.x: static method, accepts ``proxies`` dict
-        # passed straight to ``requests``. Pass ``proxies=None`` and it just
-        # behaves like a normal direct call.
-        if _PROXIES:
-            transcript = YouTubeTranscriptApi.get_transcript(
-                video_id, proxies=_PROXIES
-            )
-        else:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        # 1.x API: instance method returns a FetchedTranscript (iterable of
+        # FetchedTranscriptSnippet, each with .text/.start/.duration attrs).
+        fetched = _api.fetch(video_id)
     except VideoUnavailable:
         return {
             "success": False,
@@ -195,12 +198,12 @@ def ingest_video(url: str) -> dict[str, Any]:
 
     segments = [
         {
-            "text": seg["text"],
-            "start": float(seg["start"]),
-            "duration": float(seg.get("duration", 0)),
+            "text": snippet.text,
+            "start": float(snippet.start),
+            "duration": float(snippet.duration),
         }
-        for seg in transcript
-        if seg.get("text", "").strip()
+        for snippet in fetched
+        if snippet.text and snippet.text.strip()
     ]
 
     chunks = _chunk_segments(segments)
@@ -209,7 +212,7 @@ def ingest_video(url: str) -> dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 # Error classification (for everything ``youtube-transcript-api`` doesn't
-# expose as a typed exception)
+# expose as a typed exception we already catch above)
 # ---------------------------------------------------------------------------
 
 
@@ -217,9 +220,9 @@ def _classify_unexpected_error(video_id: str, exc: Exception) -> dict[str, Any]:
     """Map an unexpected exception into our public error_type vocabulary.
 
     youtube-transcript-api raises ``IpBlocked`` / ``RequestBlocked`` /
-    ``AgeRestricted`` etc. only in certain versions, so we route by class
-    name rather than importing them eagerly. Proxy connection failures
-    bubble up from ``requests`` as ``ProxyError`` / ``ConnectionError``.
+    ``AgeRestricted`` / ``YouTubeRequestFailed`` etc. depending on version
+    and condition; we route by class name so we don't depend on every
+    exception being importable in every release.
     """
     name = type(exc).__name__
     msg = str(exc)
@@ -231,7 +234,7 @@ def _classify_unexpected_error(video_id: str, exc: Exception) -> dict[str, Any]:
             "error_type": "ip_blocked",
             "error": (
                 "YouTube has blocked requests from "
-                + ("the proxy IP" if _PROXIES else "this IP")
+                + ("the proxy IP" if _PROXY_CONFIGURED else "this IP")
                 + ". Rotate the proxy credentials or wait before retrying."
             ),
         }
@@ -245,7 +248,7 @@ def _classify_unexpected_error(video_id: str, exc: Exception) -> dict[str, Any]:
             ),
         }
     if name in {"ProxyError", "ProxySchemeUnknown"} or (
-        _PROXIES and ("proxy" in msg_lower or "tunnel" in msg_lower)
+        _PROXY_CONFIGURED and ("proxy" in msg_lower or "tunnel" in msg_lower)
     ):
         return {
             "success": False,
