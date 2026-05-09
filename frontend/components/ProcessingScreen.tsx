@@ -6,45 +6,122 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { getStatus, type JobStatus, type Status } from "@/lib/api";
 
+export type ProcessingType = "student" | "faculty" | "provost";
+
 type StageState = "pending" | "active" | "done" | "error";
-
-const STAGES = [
-  { key: "ingestion", label: "Fetching transcript & chunking" },
-  { key: "curriculum", label: "Generating study materials" },
-  { key: "search", label: "Building search index" },
-] as const;
-
-const STATUS_ORDER: Status[] = ["pending", "ingested", "curated", "complete"];
-
-// Larger, friendlier message shown while a stage is running.
-const ACTIVE_MESSAGE: Record<Status, string> = {
-  pending: "Fetching the transcript from YouTube…",
-  ingested: "Calling Gemini to draft your outline, summaries, and flashcards…",
-  curated: "Embedding chunks and building the search index…",
-  complete: "All done!",
-  error: "Something went wrong.",
-};
 
 const POLL_MS = 2000;
 
-function stageState(stageKey: string, status: Status, hasError: boolean): StageState {
-  if (hasError) return "pending";
-  const cur = STATUS_ORDER.indexOf(status);
-  if (cur === -1) return "pending";
-  if (stageKey === "ingestion") {
-    if (cur >= 1) return "done";
-    return cur === 0 ? "active" : "pending";
-  }
-  if (stageKey === "curriculum") {
-    if (cur >= 2) return "done";
-    return cur === 1 ? "active" : "pending";
-  }
-  // search
-  if (cur >= 3) return "done";
-  return cur === 2 ? "active" : "pending";
+// ---------------------------------------------------------------------------
+// Per-role configuration
+// ---------------------------------------------------------------------------
+
+interface RoleConfig {
+  stages: string[];
+  // Map an active backend status → "stages done so far". Anything past the
+  // last entry counts as fully complete.
+  stagesDoneByStatus: Partial<Record<Status, number>>;
+  activeMessage: Partial<Record<Status, string>>;
+  destination: (jobId: string) => string;
+  cardTitle: string;
+  successMessage: string;
 }
 
-export default function ProcessingScreen({ jobId }: { jobId: string }) {
+const STUDENT_CONFIG: RoleConfig = {
+  stages: [
+    "Fetching transcript",
+    "Analyzing structure",
+    "Generating flashcards",
+    "Building search index",
+  ],
+  // Student backend emits: pending → ingested → curated → complete.
+  // Map curated → 3 stages done so the 4-label UI feels honest even
+  // though "Analyzing structure" and "Generating flashcards" share
+  // a single Gemini call.
+  stagesDoneByStatus: {
+    pending: 0,
+    ingested: 1,
+    curated: 3,
+    complete: 4,
+  },
+  activeMessage: {
+    pending: "Fetching the transcript from YouTube…",
+    ingested: "Calling Gemini to draft your outline, summaries, and flashcards…",
+    curated: "Embedding chunks and building the search index…",
+    complete: "All done!",
+  },
+  destination: (jobId) => `/study/${jobId}`,
+  cardTitle: "Processing your lecture",
+  successMessage: "Your study workspace is ready.",
+};
+
+const FACULTY_CONFIG: RoleConfig = {
+  stages: [
+    "Fetching transcript",
+    "Analyzing pedagogy",
+    "Evaluating accessibility",
+    "Generating audit report",
+  ],
+  // Faculty backend emits: pending → ingested → complete.
+  // The audit is one Gemini call covering pedagogy + accessibility +
+  // equity + tone, so the middle stages share the "ingested" state.
+  stagesDoneByStatus: {
+    pending: 0,
+    ingested: 1,
+    complete: 4,
+  },
+  activeMessage: {
+    pending: "Fetching the transcript from YouTube…",
+    ingested:
+      "Auditing pedagogical clarity, accessibility, equity & tone with Gemini…",
+    complete: "Audit ready.",
+  },
+  destination: (jobId) => `/faculty/report/${jobId}`,
+  cardTitle: "Auditing your lecture",
+  successMessage: "Your private audit report is ready.",
+};
+
+const PROVOST_CONFIG: RoleConfig = {
+  stages: [
+    "Fetching transcripts",
+    "Mapping curriculum",
+    "Comparing learning objectives",
+    "Building coverage report",
+  ],
+  // Provost backend emits: pending → ingested → complete.
+  stagesDoneByStatus: {
+    pending: 0,
+    ingested: 1,
+    complete: 4,
+  },
+  activeMessage: {
+    pending: "Pulling transcripts for every lecture you submitted…",
+    ingested:
+      "Comparing each lecture against your stated objectives with Gemini…",
+    complete: "Coverage map ready.",
+  },
+  destination: (jobId) => `/provost/report/${jobId}`,
+  cardTitle: "Building your coverage map",
+  successMessage: "Your curriculum coverage map is ready.",
+};
+
+const CONFIG_BY_TYPE: Record<ProcessingType, RoleConfig> = {
+  student: STUDENT_CONFIG,
+  faculty: FACULTY_CONFIG,
+  provost: PROVOST_CONFIG,
+};
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+interface Props {
+  jobId: string;
+  type: ProcessingType;
+}
+
+export default function ProcessingScreen({ jobId, type }: Props) {
+  const config = CONFIG_BY_TYPE[type];
   const router = useRouter();
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +137,7 @@ export default function ProcessingScreen({ jobId }: { jobId: string }) {
         if (cancelledRef.current) return;
         setJob(data);
         if (data.status === "complete") {
-          router.replace(`/study/${jobId}`);
+          router.replace(config.destination(jobId));
           return;
         }
         if (data.status === "error") {
@@ -83,15 +160,21 @@ export default function ProcessingScreen({ jobId }: { jobId: string }) {
       cancelledRef.current = true;
       if (timer) clearTimeout(timer);
     };
-  }, [jobId, router]);
+  }, [jobId, router, config]);
 
   const status: Status = job?.status ?? "pending";
   const hasError = !!error;
-  // Stable key for AnimatePresence — when this changes, the message crossfades.
+
+  const stagesDone = hasError
+    ? 0
+    : config.stagesDoneByStatus[status] ?? 0;
+
   const messageKey = hasError ? "error" : status;
   const activeMessage = hasError
     ? error
-    : ACTIVE_MESSAGE[status] ?? ACTIVE_MESSAGE.pending;
+    : config.activeMessage[status] ??
+      config.activeMessage.pending ??
+      "Working…";
 
   return (
     <main className="min-h-screen flex items-center justify-center px-6 py-12">
@@ -102,10 +185,9 @@ export default function ProcessingScreen({ jobId }: { jobId: string }) {
         className="w-full max-w-md bg-slate-900/60 backdrop-blur border border-slate-800 rounded-2xl p-8"
       >
         <h2 className="text-xl font-semibold text-center text-slate-300 mb-1">
-          {hasError ? "Something went wrong" : "Processing your lecture"}
+          {hasError ? "Something went wrong" : config.cardTitle}
         </h2>
 
-        {/* Animated current-status message — crossfades when stage advances. */}
         <div className="min-h-[3.5rem] flex items-center justify-center mb-8">
           <AnimatePresence mode="wait">
             <motion.p
@@ -124,24 +206,30 @@ export default function ProcessingScreen({ jobId }: { jobId: string }) {
         </div>
 
         <ul className="space-y-4">
-          {STAGES.map((stage) => {
-            const s = stageState(stage.key, status, hasError);
+          {config.stages.map((label, idx) => {
+            const state: StageState = hasError
+              ? "pending"
+              : idx < stagesDone
+              ? "done"
+              : idx === stagesDone
+              ? "active"
+              : "pending";
             return (
-              <li key={stage.key} className="flex items-center gap-3">
-                <StageIcon state={s} />
+              <li key={label} className="flex items-center gap-3">
+                <StageIcon state={state} />
                 <motion.span
                   animate={{
                     color:
-                      s === "done"
+                      state === "done"
                         ? "#e2e8f0"
-                        : s === "active"
+                        : state === "active"
                         ? "#f1f5f9"
                         : "#64748b",
                   }}
                   transition={{ duration: 0.3 }}
                   className="text-sm"
                 >
-                  {stage.label}
+                  {label}
                 </motion.span>
               </li>
             );
@@ -160,7 +248,7 @@ export default function ProcessingScreen({ jobId }: { jobId: string }) {
                 href="/"
                 className="inline-block text-sm text-indigo-400 hover:text-indigo-300"
               >
-                ← Try another URL
+                ← Back to start
               </Link>
             </motion.div>
           )}
@@ -194,13 +282,11 @@ function StageIcon({ state }: { state: StageState }) {
   if (state === "active") {
     return (
       <div className="relative w-6 h-6 shrink-0">
-        {/* Pulsing halo */}
         <motion.div
           animate={{ scale: [1, 1.6, 1], opacity: [0.5, 0, 0.5] }}
           transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
           className="absolute inset-0 rounded-full bg-indigo-500/40"
         />
-        {/* Spinner */}
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}

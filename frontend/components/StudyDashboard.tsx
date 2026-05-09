@@ -4,18 +4,19 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
+  answerLecture,
   formatTime,
   getResults,
-  searchLecture,
   translateMaterials,
+  type AnswerResponse,
   type Flashcard as FlashcardType,
   type LectureResult,
   type OutlineSection,
-  type SearchHit,
   type StudyMaterials,
   type Summaries,
 } from "@/lib/api";
 import Flashcard from "@/components/Flashcard";
+import SwitchRoleButton from "@/components/SwitchRoleButton";
 import TimestampButton from "@/components/TimestampButton";
 import YouTubePlayer, {
   type YouTubePlayerHandle,
@@ -156,7 +157,7 @@ export default function StudyDashboard({ jobId }: { jobId: string }) {
       {/* ---------- Header ---------- */}
       <header className="flex items-center justify-between gap-3 mb-4 sm:mb-6 max-w-7xl mx-auto">
         <Link
-          href="/"
+          href="/student"
           className="text-slate-500 hover:text-slate-200 text-xs sm:text-sm transition-colors shrink-0"
         >
           ← <span className="hidden sm:inline">New lecture</span>
@@ -172,6 +173,7 @@ export default function StudyDashboard({ jobId }: { jobId: string }) {
           <span className="hidden lg:inline text-xs text-slate-600 font-mono truncate">
             {data?.video_id ?? ""}
           </span>
+          <SwitchRoleButton />
         </div>
       </header>
 
@@ -553,8 +555,8 @@ function SearchTab({
   onSeek: (seconds: number) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [hit, setHit] = useState<SearchHit | null>(null);
-  const [searched, setSearched] = useState(false);
+  const [result, setResult] = useState<AnswerResponse | null>(null);
+  const [showExcerpt, setShowExcerpt] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -562,14 +564,13 @@ function SearchTab({
     e.preventDefault();
     setError(null);
     setLoading(true);
-    setHit(null);
-    setSearched(false);
+    setResult(null);
+    setShowExcerpt(false);
     try {
-      const r = await searchLecture(jobId, query);
-      setHit(r.result);
-      setSearched(true);
+      const r = await answerLecture(jobId, query);
+      setResult(r);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed");
+      setError(err instanceof Error ? err.message : "Failed to get an answer");
     } finally {
       setLoading(false);
     }
@@ -589,44 +590,103 @@ function SearchTab({
           disabled={loading || !query.trim()}
           className="w-full px-4 py-2.5 rounded-lg bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
         >
-          {loading ? "Searching…" : "Search"}
+          {loading ? "Thinking…" : "Ask"}
         </button>
       </form>
 
       {error && <p className="text-rose-400 text-sm">{error}</p>}
 
       <AnimatePresence mode="wait">
-        {hit && (
+        {result && result.covered && (
           <motion.div
-            key="hit"
+            key="answer-covered"
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className="p-4 rounded-lg border border-indigo-900/50 bg-indigo-950/20 space-y-3"
+            className="p-5 rounded-lg border border-indigo-900/50 bg-indigo-950/20 space-y-4"
           >
-            <p className="text-sm text-slate-200 leading-relaxed">{hit.text}</p>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <span className="text-xs text-slate-500">
-                similarity {hit.similarity_score?.toFixed(2)}
-              </span>
+            {/* Answer — prominent */}
+            <p className="text-base text-slate-100 leading-relaxed">
+              {result.answer}
+            </p>
+
+            {/* Jump to source */}
+            {result.source_timestamp != null && (
               <TimestampButton
-                seconds={hit.start_time}
+                seconds={result.source_timestamp}
                 onSeek={onSeek}
                 variant="prominent"
-                label={`Jump to ${formatTime(hit.start_time)}`}
+                label={`Jump to source · ${formatTime(result.source_timestamp)}`}
               />
-            </div>
+            )}
+
+            {/* Collapsible transcript excerpt */}
+            {result.source_text && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowExcerpt((v) => !v)}
+                  aria-expanded={showExcerpt}
+                  className="text-xs text-slate-400 hover:text-slate-100 transition-colors flex items-center gap-1.5"
+                >
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    style={{
+                      transform: showExcerpt
+                        ? "rotate(180deg)"
+                        : "rotate(0deg)",
+                      transition: "transform 0.2s",
+                    }}
+                    aria-hidden
+                  >
+                    <path
+                      d="M3 5l3 3 3-3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  {showExcerpt
+                    ? "Hide transcript excerpt"
+                    : "View transcript excerpt"}
+                </button>
+                <AnimatePresence initial={false}>
+                  {showExcerpt && (
+                    <motion.div
+                      key="excerpt"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <p className="mt-2 text-xs italic text-slate-400 leading-relaxed border-l-2 border-slate-800 pl-3">
+                        &ldquo;{result.source_text}&rdquo;
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
           </motion.div>
         )}
-        {searched && !hit && !error && (
-          <motion.p
-            key="no-hit"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-sm text-slate-500"
+
+        {result && !result.covered && (
+          <motion.div
+            key="answer-not-covered"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="p-5 rounded-lg border border-slate-800 bg-slate-900/30"
           >
-            No matches found.
-          </motion.p>
+            <p className="text-sm text-slate-500 italic leading-relaxed">
+              {result.answer}
+            </p>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

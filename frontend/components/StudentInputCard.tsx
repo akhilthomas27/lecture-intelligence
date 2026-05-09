@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { submitLecture } from "@/lib/api";
 
-// Known-working public lecture used by "Try example lecture".
 const FEATURED_EXAMPLE_URL = "https://www.youtube.com/watch?v=aircAruvnKk";
 
 const MORE_EXAMPLES = [
@@ -19,7 +18,7 @@ const MORE_EXAMPLES = [
   },
 ];
 
-export default function UrlInputCard() {
+export default function StudentInputCard() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,7 +29,7 @@ export default function UrlInputCard() {
     setLoading(true);
     try {
       const { job_id } = await submitLecture(target);
-      router.push(`/processing?jobId=${job_id}`);
+      router.push(`/processing?jobId=${job_id}&type=student`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Submission failed");
       setLoading(false);
@@ -40,10 +39,6 @@ export default function UrlInputCard() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     await submit(url);
-  }
-
-  function handleTryExample() {
-    setUrl(FEATURED_EXAMPLE_URL);
   }
 
   return (
@@ -75,7 +70,7 @@ export default function UrlInputCard() {
         </button>
         <button
           type="button"
-          onClick={handleTryExample}
+          onClick={() => setUrl(FEATURED_EXAMPLE_URL)}
           disabled={loading}
           className="w-full px-5 py-3 rounded-xl border border-slate-800 hover:border-indigo-500/50 hover:bg-indigo-500/5 disabled:opacity-50 text-slate-300 hover:text-indigo-300 font-medium text-sm transition-colors flex items-center justify-center gap-2"
         >

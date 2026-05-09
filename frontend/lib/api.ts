@@ -72,6 +72,126 @@ export interface SearchResponse {
   result: SearchHit | null;
 }
 
+export interface AnswerResponse {
+  job_id: string;
+  query: string;
+  answer: string;
+  covered: boolean;
+  source_timestamp: number | null;
+  source_text: string | null;
+  similarity_score: number | null;
+}
+
+// ---- Faculty audit ---------------------------------------------------------
+
+export type AuditDimension =
+  | "pedagogical"
+  | "accessibility"
+  | "equity"
+  | "language";
+
+export type AuditSeverity = "high" | "medium" | "low";
+
+export interface PriorityFix {
+  title: string;
+  issue: string;
+  why_it_matters: string;
+  timestamp: number;
+  original_text: string;
+  suggested_rewrite: string;
+}
+
+export interface AuditFinding {
+  dimension: AuditDimension;
+  title: string;
+  issue: string;
+  severity: AuditSeverity;
+  timestamp: number;
+  original_text: string;
+  suggested_rewrite: string;
+}
+
+export interface AuditStrength {
+  title: string;
+  description: string;
+  timestamp: number;
+}
+
+export interface AuditReport {
+  priority_fix: PriorityFix;
+  findings: AuditFinding[];
+  strengths: AuditStrength[];
+}
+
+export interface FacultyReportResponse {
+  job_id: string;
+  video_id: string | null;
+  url: string;
+  audit_report: AuditReport;
+}
+
+// ---- Provost coverage map --------------------------------------------------
+
+export type ObjectiveStatus =
+  | "fully_covered"
+  | "partially_covered"
+  | "not_covered";
+
+export interface CurriculumSummary {
+  total_objectives: number;
+  fully_covered: number;
+  partially_covered: number;
+  not_covered: number;
+  coverage_percentage: number;
+}
+
+export interface ObjectiveLectureRef {
+  url: string;
+  timestamp: number;
+  excerpt: string;
+}
+
+export interface CurriculumObjective {
+  objective: string;
+  status: ObjectiveStatus;
+  coverage_detail: string;
+  lectures: ObjectiveLectureRef[];
+}
+
+export interface CurriculumLecture {
+  url: string;
+  objectives_covered: number;
+  key_topics: string[];
+  gaps: string[];
+}
+
+export interface CurriculumRecommendation {
+  priority: number;
+  gap: string;
+  suggestion: string;
+}
+
+export interface CurriculumMap {
+  summary: CurriculumSummary;
+  objectives: CurriculumObjective[];
+  lectures: CurriculumLecture[];
+  recommendations: CurriculumRecommendation[];
+}
+
+export interface FailedLecture {
+  url: string;
+  error_type: string | null;
+  error: string | null;
+}
+
+export interface ProvostReportResponse {
+  job_id: string;
+  urls: string[];
+  objectives: string;
+  failed_lectures: FailedLecture[];
+  curriculum_map: CurriculumMap;
+}
+
 export interface TranslationResponse {
   job_id: string;
   target_language: string;
@@ -149,6 +269,66 @@ export async function searchLecture(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId, query }),
   });
+  return (await ensureOk(res)).json();
+}
+
+export async function answerLecture(
+  jobId: string,
+  query: string,
+): Promise<AnswerResponse> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/answer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId, query }),
+  });
+  return (await ensureOk(res)).json();
+}
+
+// ---- Faculty / Provost endpoints ------------------------------------------
+
+export async function submitFacultyLecture(
+  url: string,
+): Promise<{ job_id: string; status: string; user_type?: string }> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/process`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, user_type: "faculty" }),
+  });
+  return (await ensureOk(res)).json();
+}
+
+export async function submitProvostCourse(
+  urls: string[],
+  objectives: string,
+): Promise<{ job_id: string; status: string; user_type?: string }> {
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/api/process-course`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls, objectives }),
+    },
+  );
+  return (await ensureOk(res)).json();
+}
+
+export async function getFacultyReport(
+  jobId: string,
+): Promise<FacultyReportResponse> {
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/api/faculty-report/${jobId}`,
+    { cache: "no-store" },
+  );
+  return (await ensureOk(res)).json();
+}
+
+export async function getProvostReport(
+  jobId: string,
+): Promise<ProvostReportResponse> {
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/api/provost-report/${jobId}`,
+    { cache: "no-store" },
+  );
   return (await ensureOk(res)).json();
 }
 
