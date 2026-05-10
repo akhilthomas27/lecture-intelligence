@@ -33,7 +33,10 @@ const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(
     }));
 
     return (
-      <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-slate-800">
+      <div
+        className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
+        style={{ border: "1px solid rgba(255,255,255,0.06)" }}
+      >
         <YouTube
           videoId={videoId}
           opts={{

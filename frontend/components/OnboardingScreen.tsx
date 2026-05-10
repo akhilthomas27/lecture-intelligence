@@ -23,20 +23,20 @@ const ROLE_CARDS: RoleCard[] = [
   {
     type: "student",
     title: "Student",
-    blurb: "Turn lectures into a complete study environment with notes, flashcards, and Q&A.",
+    blurb: "Turn lectures into study materials",
     emoji: "🎓",
   },
   {
     type: "faculty",
     title: "Faculty",
-    blurb: "Get private, actionable feedback on your lecture before it goes live.",
-    emoji: "🧑‍🏫",
+    blurb: "Get private feedback on your teaching",
+    emoji: "🏛️",
   },
   {
     type: "provost",
     title: "Provost",
-    blurb: "Verify your course is delivering on its stated learning objectives.",
-    emoji: "📚",
+    blurb: "Map curriculum against objectives",
+    emoji: "📊",
   },
 ];
 
@@ -84,76 +84,75 @@ export default function OnboardingScreen() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-4 sm:px-6 py-12">
+    <main className="min-h-screen flex items-center justify-center px-4 sm:px-6 py-12">
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
-        className="w-full max-w-3xl"
+        className="glass-card w-full max-w-2xl p-8 sm:p-12"
       >
-        <header className="text-center mb-10">
-          <p className="uppercase tracking-[0.2em] text-xs text-indigo-400 mb-3">
+        <header className="mb-8">
+          <p className="text-[11px] sm:text-xs text-indigo-400 uppercase tracking-[0.22em] mb-3">
             Lecture Intelligence
           </p>
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-3 bg-gradient-to-b from-white to-slate-400 bg-clip-text text-transparent">
-            Welcome
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
+            How are you using this today?
           </h1>
-          <p className="text-slate-400 text-base sm:text-lg">
-            Let&apos;s set up your workspace.
-          </p>
         </header>
 
         {/* Optional name */}
-        <section className="mb-8">
-          <label
-            htmlFor="user-name"
-            className="block text-sm text-slate-300 mb-2"
-          >
-            What should we call you?{" "}
-            <span className="text-slate-600 text-xs">(optional)</span>
+        <section className="mb-7">
+          <label htmlFor="user-name" className="sr-only">
+            What should we call you?
           </label>
           <input
             id="user-name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Your name"
+            placeholder="What should we call you? (optional)"
             autoComplete="given-name"
-            className="w-full px-4 py-3 rounded-xl bg-slate-900 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition-all placeholder:text-slate-600"
+            className="glass-input w-full px-4 py-3 text-sm sm:text-base"
           />
         </section>
 
         {/* Mandatory role selection */}
         <section className="mb-8">
-          <p className="text-sm text-slate-300 mb-3">
-            What best describes you?
-          </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {ROLE_CARDS.map((card, i) => (
-              <motion.button
-                key={card.type}
-                type="button"
-                onClick={() => setSelected(card.type)}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: 0.1 + i * 0.08 }}
-                whileHover={{ y: -2 }}
-                className={`text-left p-5 rounded-xl border transition-colors ${
-                  selected === card.type
-                    ? "border-indigo-500 bg-indigo-500/10"
-                    : "border-slate-800 bg-slate-900 hover:border-slate-700"
-                }`}
-                aria-pressed={selected === card.type}
-              >
-                <div className="text-2xl mb-2">{card.emoji}</div>
-                <h3 className="font-semibold text-slate-100 mb-1">
-                  {card.title}
-                </h3>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  {card.blurb}
-                </p>
-              </motion.button>
-            ))}
+            {ROLE_CARDS.map((card) => {
+              const active = selected === card.type;
+              return (
+                <button
+                  key={card.type}
+                  type="button"
+                  onClick={() => setSelected(card.type)}
+                  aria-pressed={active}
+                  // Spec calls for CSS-only transitions on these cards (not
+                  // Framer) for performance — they re-render on every
+                  // selection change.
+                  style={{
+                    background: active
+                      ? "rgba(99, 102, 241, 0.10)"
+                      : "rgba(255, 255, 255, 0.03)",
+                    borderColor: active
+                      ? "#6366f1"
+                      : "rgba(255, 255, 255, 0.06)",
+                    boxShadow: active
+                      ? "0 0 24px rgba(99, 102, 241, 0.18)"
+                      : "none",
+                  }}
+                  className="role-card group text-left p-5 rounded-2xl border transition-all duration-150 hover:!border-indigo-500/70 hover:!shadow-[0_0_20px_rgba(99,102,241,0.15)] hover:scale-[1.015]"
+                >
+                  <div className="text-2xl mb-2.5">{card.emoji}</div>
+                  <h3 className="font-semibold text-white mb-1 text-sm sm:text-base">
+                    {card.title}
+                  </h3>
+                  <p className="text-xs text-white/50 leading-relaxed">
+                    {card.blurb}
+                  </p>
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -161,7 +160,7 @@ export default function OnboardingScreen() {
           type="button"
           onClick={handleContinue}
           disabled={!selected}
-          className="w-full px-5 py-4 rounded-xl bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed text-white font-semibold transition-colors"
+          className="indigo-button w-full px-5 py-3.5 text-sm sm:text-base"
         >
           Continue
         </button>

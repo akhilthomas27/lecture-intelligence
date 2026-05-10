@@ -14,52 +14,75 @@ import {
   type FacultyReportResponse,
   type PriorityFix,
 } from "@/lib/api";
-import RoleHeader from "@/components/RoleHeader";
+import SwitchRoleButton from "@/components/SwitchRoleButton";
 import TimestampButton from "@/components/TimestampButton";
 import YouTubePlayer, {
   type YouTubePlayerHandle,
 } from "@/components/YouTubePlayer";
 
-type TabKey = "priority" | "full" | "strengths";
-
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "priority", label: "Priority Fix" },
-  { key: "full", label: "Full Audit" },
-  { key: "strengths", label: "Strengths" },
-];
+// ---------------------------------------------------------------------------
+// Per-dimension theming (each color shifts the section's accent stripe,
+// header, badge, and rewrite block).
+// ---------------------------------------------------------------------------
 
 const DIMENSION_META: Record<
   AuditDimension,
-  { label: string; tone: string }
+  {
+    label: string;
+    color: string; // primary accent (#hex)
+    bgTint: string;
+  }
 > = {
   pedagogical: {
     label: "Pedagogical Clarity",
-    tone: "bg-blue-500/15 text-blue-300 border-blue-500/30",
+    color: "#3b82f6",
+    bgTint: "rgba(59,130,246,0.06)",
   },
   accessibility: {
     label: "Accessibility",
-    tone: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+    color: "#10b981",
+    bgTint: "rgba(16,185,129,0.06)",
   },
   equity: {
     label: "Equity & Inclusion",
-    tone: "bg-purple-500/15 text-purple-300 border-purple-500/30",
+    color: "#8b5cf6",
+    bgTint: "rgba(139,92,246,0.06)",
   },
   language: {
     label: "Language & Tone",
-    tone: "bg-orange-500/15 text-orange-300 border-orange-500/30",
+    color: "#f97316",
+    bgTint: "rgba(249,115,22,0.06)",
   },
 };
 
-const SEVERITY_META: Record<AuditSeverity, { label: string; tone: string }> = {
-  high: { label: "High", tone: "bg-rose-500/20 text-rose-300" },
-  medium: { label: "Medium", tone: "bg-amber-500/20 text-amber-300" },
-  low: { label: "Low", tone: "bg-slate-500/20 text-slate-300" },
+const SEVERITY_META: Record<
+  AuditSeverity,
+  { label: string; bg: string; color: string }
+> = {
+  high: {
+    label: "High",
+    bg: "rgba(244,63,94,0.18)",
+    color: "#fda4af",
+  },
+  medium: {
+    label: "Medium",
+    bg: "rgba(245,158,11,0.18)",
+    color: "#fcd34d",
+  },
+  low: {
+    label: "Low",
+    bg: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.65)",
+  },
 };
+
+// ---------------------------------------------------------------------------
+// Top component
+// ---------------------------------------------------------------------------
 
 export default function FacultyReport({ jobId }: { jobId: string }) {
   const [data, setData] = useState<FacultyReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>("priority");
   const playerRef = useRef<YouTubePlayerHandle>(null);
 
   const seekTo = (seconds: number) => playerRef.current?.seekTo(seconds);
@@ -75,9 +98,12 @@ export default function FacultyReport({ jobId }: { jobId: string }) {
   if (error) {
     return (
       <main className="min-h-screen flex items-center justify-center p-8">
-        <div className="text-center max-w-md">
-          <p className="text-rose-400 mb-4">Error: {error}</p>
-          <Link href="/faculty" className="text-indigo-400 hover:text-indigo-300">
+        <div className="text-center max-w-md glass-card p-8">
+          <p className="text-rose-300 mb-4 text-sm">Error: {error}</p>
+          <Link
+            href="/faculty"
+            className="text-indigo-300 hover:text-indigo-200"
+          >
             ← Audit another lecture
           </Link>
         </div>
@@ -88,107 +114,103 @@ export default function FacultyReport({ jobId }: { jobId: string }) {
   if (!data) {
     return (
       <main className="min-h-screen flex items-center justify-center">
-        <p className="text-slate-400">Loading…</p>
+        <p className="text-white/50">Loading…</p>
       </main>
     );
   }
 
   return (
-    <motion.main
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.4 }}
-      className="min-h-screen p-3 sm:p-4 md:p-6"
-    >
-      <RoleHeader>
-        <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-          Private — only visible to you
-        </span>
-      </RoleHeader>
+    <main className="h-screen flex flex-col">
+      <FacultyTopNav videoTitle={`Video ${data.video_id ?? ""}`} />
 
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-bold mb-2">
-          Lecture Audit Report
-        </h1>
-        <p className="text-sm text-slate-500 mb-6 sm:hidden">
-          Private — only visible to you
-        </p>
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[55%_45%] min-h-0 overflow-hidden">
+        {/* ----- Left ----- */}
+        <section className="flex flex-col gap-3 p-4 sm:p-6 overflow-y-auto">
+          {data.video_id ? (
+            <YouTubePlayer ref={playerRef} videoId={data.video_id} />
+          ) : (
+            <div className="w-full aspect-video bg-black rounded-xl border border-white/[0.06]" />
+          )}
+          <div className="flex items-baseline gap-3 mt-2">
+            <h1 className="text-lg sm:text-xl font-semibold text-white">
+              Lecture Audit Report
+            </h1>
+            <PrivateBadge />
+          </div>
+          <p className="text-xs text-white/40">
+            Private — only visible to you. Nothing is shared or saved beyond
+            this session.
+          </p>
+        </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
-          {/* Left: video — 60% */}
-          <section className="lg:col-span-3 lg:sticky lg:top-6 lg:self-start">
-            {data.video_id ? (
-              <YouTubePlayer ref={playerRef} videoId={data.video_id} />
-            ) : (
-              <div className="w-full aspect-video bg-slate-900 rounded-xl border border-slate-800" />
-            )}
-          </section>
+        {/* ----- Right (scrollable report) ----- */}
+        <section
+          className="flex flex-col min-h-0 lg:border-l overflow-y-auto"
+          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+        >
+          <div className="p-4 sm:p-6 space-y-6">
+            <PriorityFixCard
+              fix={data.audit_report.priority_fix}
+              onSeek={seekTo}
+            />
 
-          {/* Right: tabs — 40% */}
-          <section className="lg:col-span-2 flex flex-col min-w-0">
-            <nav className="flex gap-1 border-b border-slate-800 mb-4 sm:mb-5 overflow-x-auto">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setTab(t.key)}
-                  className={`relative px-3 py-2.5 text-sm whitespace-nowrap transition-colors ${
-                    tab === t.key
-                      ? "text-slate-100"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  {t.label}
-                  {tab === t.key && (
-                    <motion.span
-                      layoutId="faculty-tab-underline"
-                      className="absolute left-0 right-0 -bottom-px h-0.5 bg-indigo-500"
-                    />
-                  )}
-                </button>
-              ))}
-            </nav>
+            <FindingsByDimension
+              findings={data.audit_report.findings}
+              onSeek={seekTo}
+            />
 
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={tab}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                {tab === "priority" && (
-                  <PriorityFixView
-                    fix={data.audit_report.priority_fix}
-                    onSeek={seekTo}
-                  />
-                )}
-                {tab === "full" && (
-                  <FullAuditView
-                    findings={data.audit_report.findings}
-                    onSeek={seekTo}
-                  />
-                )}
-                {tab === "strengths" && (
-                  <StrengthsView
-                    strengths={data.audit_report.strengths}
-                    onSeek={seekTo}
-                  />
-                )}
-              </motion.div>
-            </AnimatePresence>
-          </section>
-        </div>
+            <StrengthsCard
+              strengths={data.audit_report.strengths}
+              onSeek={seekTo}
+            />
+          </div>
+        </section>
       </div>
-    </motion.main>
+    </main>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Priority fix
+// Top nav (frosted)
 // ---------------------------------------------------------------------------
 
-function PriorityFixView({
+function FacultyTopNav({ videoTitle }: { videoTitle: string }) {
+  return (
+    <header className="top-nav flex items-center gap-3 px-4 sm:px-6 h-14 shrink-0">
+      <Link
+        href="/"
+        className="text-white text-sm font-medium tracking-tight hover:text-indigo-300 transition-colors shrink-0"
+      >
+        Lecture Intelligence
+      </Link>
+      <div className="flex-1 text-center text-xs sm:text-sm text-white/45 truncate min-w-0 px-2 hidden sm:block">
+        {videoTitle}
+      </div>
+      <SwitchRoleButton />
+    </header>
+  );
+}
+
+function PrivateBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full text-indigo-300"
+      style={{
+        background: "rgba(99,102,241,0.08)",
+        border: "1px solid rgba(99,102,241,0.25)",
+      }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+      Private
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Priority fix — always visible at the top of the right panel
+// ---------------------------------------------------------------------------
+
+function PriorityFixCard({
   fix,
   onSeek,
 }: {
@@ -196,42 +218,69 @@ function PriorityFixView({
   onSeek: (seconds: number) => void;
 }) {
   return (
-    <article className="p-5 rounded-xl border border-indigo-500/30 bg-indigo-500/5 space-y-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-xs uppercase tracking-wider text-indigo-300">
-          Top priority fix
+    <article
+      className="p-5 sm:p-6 rounded-2xl space-y-4"
+      style={{
+        background: "rgba(245,158,11,0.04)",
+        border: "1px solid rgba(245,158,11,0.30)",
+        boxShadow: "0 0 24px rgba(245,158,11,0.08)",
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.2em] font-semibold"
+          style={{ color: "#fbbf24" }}
+        >
+          <span aria-hidden>⚡</span>
+          Top Priority
         </span>
-        <TimestampButton seconds={fix.timestamp} onSeek={onSeek} />
+        <TimestampButton
+          seconds={fix.timestamp}
+          onSeek={onSeek}
+          tone="amber"
+        />
       </div>
-      <h2 className="text-xl font-semibold text-slate-100 leading-snug">
+      <h2 className="text-lg sm:text-xl font-semibold text-white leading-snug">
         {fix.title}
       </h2>
       <Block label="What's wrong">{fix.issue}</Block>
       <Block label="Why it matters">{fix.why_it_matters}</Block>
+
       <div>
-        <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
           Original moment
         </p>
-        <blockquote className="text-sm italic text-slate-400 leading-relaxed border-l-2 border-slate-700 pl-3">
+        <blockquote
+          className="text-sm italic text-white/55 leading-relaxed pl-3"
+          style={{ borderLeft: "2px solid rgba(255,255,255,0.12)" }}
+        >
           &ldquo;{fix.original_text}&rdquo;
         </blockquote>
       </div>
-      <div>
-        <p className="text-xs uppercase tracking-wider text-emerald-400 mb-2">
+      <div
+        className="rounded-xl p-4"
+        style={{
+          background: "rgba(16,185,129,0.04)",
+          border: "1px solid rgba(16,185,129,0.20)",
+          borderLeft: "3px solid #10b981",
+        }}
+      >
+        <p
+          className="text-[10px] uppercase tracking-[0.2em] mb-1.5"
+          style={{ color: "#34d399" }}
+        >
           Suggested rewrite
         </p>
-        <p className="text-sm text-slate-200 leading-relaxed border-l-2 border-emerald-500/40 pl-3">
+        <p className="text-sm text-white leading-relaxed">
           {fix.suggested_rewrite}
         </p>
       </div>
-      <div className="pt-2">
-        <TimestampButton
-          seconds={fix.timestamp}
-          onSeek={onSeek}
-          variant="prominent"
-          label={`Jump to ${formatTime(fix.timestamp)}`}
-        />
-      </div>
+      <TimestampButton
+        seconds={fix.timestamp}
+        onSeek={onSeek}
+        variant="prominent"
+        label={`Jump to ${formatTime(fix.timestamp)}`}
+      />
     </article>
   );
 }
@@ -245,30 +294,26 @@ function Block({
 }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-wider text-slate-500 mb-1.5">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-1.5">
         {label}
       </p>
-      <p className="text-sm text-slate-200 leading-relaxed">{children}</p>
+      <p className="text-sm text-white/85 leading-relaxed">{children}</p>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Full audit (grouped by dimension)
+// Full audit — collapsible per-dimension sections
 // ---------------------------------------------------------------------------
 
-function FullAuditView({
+function FindingsByDimension({
   findings,
   onSeek,
 }: {
   findings: AuditFinding[];
   onSeek: (seconds: number) => void;
 }) {
-  if (!findings?.length) {
-    return <p className="text-slate-500">No findings to show.</p>;
-  }
-
-  // Group by dimension, preserve order from DIMENSION_META keys.
+  if (!findings?.length) return null;
   const groups = (Object.keys(DIMENSION_META) as AuditDimension[])
     .map((dim) => ({
       dim,
@@ -277,61 +322,171 @@ function FullAuditView({
     .filter((g) => g.items.length > 0);
 
   return (
-    <div className="space-y-6">
-      {groups.map(({ dim, items }) => (
-        <section key={dim} className="space-y-3">
-          <div
-            className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${DIMENSION_META[dim].tone}`}
-          >
-            {DIMENSION_META[dim].label}
-          </div>
-          <ul className="space-y-3">
-            {items.map((f, i) => (
-              <FindingCard key={i} finding={f} onSeek={onSeek} />
-            ))}
-          </ul>
-        </section>
+    <div className="space-y-3">
+      {groups.map(({ dim, items }, i) => (
+        <DimensionSection
+          key={dim}
+          dimension={dim}
+          findings={items}
+          onSeek={onSeek}
+          defaultOpen={i === 0}
+        />
       ))}
     </div>
   );
 }
 
-function FindingCard({
+function DimensionSection({
+  dimension,
+  findings,
+  onSeek,
+  defaultOpen,
+}: {
+  dimension: AuditDimension;
+  findings: AuditFinding[];
+  onSeek: (seconds: number) => void;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const meta = DIMENSION_META[dimension];
+
+  return (
+    <section
+      className="rounded-2xl overflow-hidden"
+      style={{
+        background: meta.bgTint,
+        border: `1px solid ${meta.color}33`,
+        borderLeft: `3px solid ${meta.color}`,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-3 p-4 hover:bg-white/[0.02] transition-colors"
+        aria-expanded={open}
+      >
+        <div className="flex items-center gap-3">
+          <span
+            className="font-semibold text-sm sm:text-base"
+            style={{ color: meta.color }}
+          >
+            {meta.label}
+          </span>
+          <span
+            className="text-[11px] px-2 py-0.5 rounded-full"
+            style={{
+              background: `${meta.color}1f`,
+              color: meta.color,
+            }}
+          >
+            {findings.length}
+          </span>
+        </div>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          style={{
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.2s",
+            color: meta.color,
+          }}
+          aria-hidden
+        >
+          <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="content"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
+            <ul className="space-y-3 p-4 pt-0">
+              {findings.map((f, idx) => (
+                <FindingRow
+                  key={idx}
+                  finding={f}
+                  accent={meta.color}
+                  onSeek={onSeek}
+                />
+              ))}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
+  );
+}
+
+function FindingRow({
   finding,
+  accent,
   onSeek,
 }: {
   finding: AuditFinding;
+  accent: string;
   onSeek: (seconds: number) => void;
 }) {
   const sev = SEVERITY_META[finding.severity];
   return (
-    <motion.li
-      initial={{ opacity: 0, x: -6 }}
-      animate={{ opacity: 1, x: 0 }}
-      className="p-4 rounded-lg border border-slate-800 bg-slate-900/40 space-y-3"
+    <li
+      className="rounded-xl p-4 space-y-3"
+      style={{
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.06)",
+      }}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="font-semibold text-sm text-slate-100">{finding.title}</h3>
-        <TimestampButton seconds={finding.timestamp} onSeek={onSeek} />
+        <h3 className="font-medium text-sm text-white">{finding.title}</h3>
+        <TimestampButton
+          seconds={finding.timestamp}
+          onSeek={onSeek}
+          tone="indigo"
+        />
       </div>
       <div className="flex items-center gap-2">
         <span
-          className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded ${sev.tone}`}
+          className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md"
+          style={{ background: sev.bg, color: sev.color }}
         >
           {sev.label} severity
         </span>
       </div>
-      <p className="text-sm text-slate-300 leading-relaxed">{finding.issue}</p>
-      <blockquote className="text-xs italic text-slate-500 leading-relaxed border-l-2 border-slate-800 pl-3">
+      <p className="text-sm text-white/80 leading-relaxed">{finding.issue}</p>
+      <blockquote
+        className="text-xs italic text-white/45 leading-relaxed pl-3"
+        style={{ borderLeft: "2px solid rgba(255,255,255,0.10)" }}
+      >
         &ldquo;{finding.original_text}&rdquo;
       </blockquote>
-      <p className="text-sm text-slate-200 leading-relaxed border-l-2 border-emerald-500/40 pl-3">
-        <span className="text-xs uppercase tracking-wider text-emerald-400 block mb-1">
+      <div
+        className="rounded-lg p-3"
+        style={{
+          background: `${accent}0d`,
+          border: `1px solid ${accent}26`,
+          borderLeft: `2px solid ${accent}`,
+        }}
+      >
+        <p
+          className="text-[10px] uppercase tracking-[0.2em] mb-1"
+          style={{ color: accent }}
+        >
           Try instead
-        </span>
-        {finding.suggested_rewrite}
-      </p>
-    </motion.li>
+        </p>
+        <p className="text-sm text-white/90 leading-relaxed">
+          {finding.suggested_rewrite}
+        </p>
+      </div>
+    </li>
   );
 }
 
@@ -339,19 +494,41 @@ function FindingCard({
 // Strengths
 // ---------------------------------------------------------------------------
 
-function StrengthsView({
+function StrengthsCard({
   strengths,
   onSeek,
 }: {
   strengths: AuditStrength[];
   onSeek: (seconds: number) => void;
 }) {
-  if (!strengths?.length) {
-    return <p className="text-slate-500">No strengths flagged yet.</p>;
-  }
+  if (!strengths?.length) return null;
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-slate-400 leading-relaxed">
+    <section
+      className="p-4 sm:p-5 rounded-2xl space-y-3"
+      style={{
+        background: "rgba(16,185,129,0.04)",
+        border: "1px solid rgba(16,185,129,0.20)",
+      }}
+    >
+      <header className="flex items-center justify-between gap-3 mb-1">
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.2em] font-semibold"
+          style={{ color: "#34d399" }}
+        >
+          <span aria-hidden>✓</span>
+          Strengths
+        </span>
+        <span
+          className="text-[11px] px-2 py-0.5 rounded-full"
+          style={{
+            background: "rgba(16,185,129,0.12)",
+            color: "#34d399",
+          }}
+        >
+          {strengths.length}
+        </span>
+      </header>
+      <p className="text-xs text-white/55 leading-relaxed">
         Things you&apos;re doing well — keep it up.
       </p>
       {strengths.map((s, i) => (
@@ -359,22 +536,30 @@ function StrengthsView({
           key={i}
           initial={{ opacity: 0, x: -6 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: i * 0.05 }}
-          className="p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5"
+          transition={{ delay: i * 0.04 }}
+          className="rounded-xl p-3 sm:p-4"
+          style={{
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderLeft: "2px solid #10b981",
+          }}
         >
           <div className="flex items-baseline justify-between gap-3 mb-1">
-            <h3 className="font-semibold text-sm text-slate-100">{s.title}</h3>
-            <TimestampButton seconds={s.timestamp} onSeek={onSeek} />
+            <h3 className="font-medium text-sm text-white">{s.title}</h3>
+            <TimestampButton
+              seconds={s.timestamp}
+              onSeek={onSeek}
+              tone="green"
+            />
           </div>
-          <p className="text-sm text-slate-300 leading-relaxed">
+          <p className="text-sm text-white/75 leading-relaxed">
             {s.description}
           </p>
         </motion.div>
       ))}
-    </div>
+    </section>
   );
 }
 
-// Avoid an unused-import warning when AuditReport is referenced only in the
-// imports for documentation purposes.
+// Re-export so consumers that want the type still resolve it.
 export type { AuditReport };

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import ThreeBackground from "@/components/ThreeBackground";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,8 +14,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-slate-950 text-slate-200 antialiased min-h-screen">
-        {children}
+      <body
+        // Pure black behind everything; the Three.js canvas sits at z-index -1
+        // and content above gets z-index 1 so clicks/taps go to the UI.
+        style={{ backgroundColor: "#000000" }}
+        className="text-white min-h-screen"
+      >
+        <ThreeBackground />
+        <div style={{ position: "relative", zIndex: 1, minHeight: "100vh" }}>
+          {children}
+        </div>
       </body>
     </html>
   );

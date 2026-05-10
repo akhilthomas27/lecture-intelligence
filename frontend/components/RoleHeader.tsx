@@ -5,29 +5,39 @@ import { getStoredUserName } from "@/lib/role";
 import SwitchRoleButton from "@/components/SwitchRoleButton";
 
 /**
- * Shared top bar for every role-scoped page.
+ * Shared top bar for the input pages (student/faculty/provost).
  *
- * Left:  "Hi, {name}" if a userName is in localStorage, otherwise empty.
- * Right: "Switch role" button.
+ * Visual: full-width strip outside the main glass card.
+ *   Left:  "Hi, {name}" if a userName is in localStorage,
+ *          otherwise the wordmark "Lecture Intelligence".
+ *   Right: optional children (e.g. role pill) + "Switch role".
  *
- * Children render between the two (e.g. a small badge).
+ * Dashboards use a different `top-nav` styled bar — this is for input pages.
  */
 export default function RoleHeader({
   children,
 }: {
   children?: React.ReactNode;
 }) {
-  // localStorage isn't available during SSR — defer the read to the client
-  // so the server-rendered HTML matches what the browser eventually shows.
+  // localStorage isn't available during SSR — defer the read so the server-
+  // rendered HTML matches what the browser eventually shows.
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     setName(getStoredUserName());
   }, []);
 
   return (
-    <header className="flex items-center justify-between gap-3 mb-6 sm:mb-8 max-w-7xl mx-auto">
-      <div className="text-xs sm:text-sm text-slate-400 truncate">
-        {name ? <>Hi, <span className="text-slate-100">{name}</span></> : null}
+    <header className="flex items-center justify-between gap-3 max-w-5xl mx-auto px-4 sm:px-6 py-5">
+      <div className="text-xs sm:text-sm truncate">
+        {name ? (
+          <span className="text-white/60">
+            Hi, <span className="text-white">{name}</span>
+          </span>
+        ) : (
+          <span className="text-white/40 tracking-wide">
+            Lecture Intelligence
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {children}

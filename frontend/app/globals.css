@@ -1,3 +1,109 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    background-color: #000000;
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+
+  /* Scrollbars stay subtle on the pure-black canvas. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  /* Native form controls drop their UA chrome. */
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  ::selection {
+    background: rgba(99, 102, 241, 0.35);
+  }
+}
+
+@layer components {
+  /* Reusable frosted-glass card (used by onboarding + input + processing
+     + every dashboard panel). Exact values per spec. */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 24px;
+  }
+
+  /* Slightly tighter glass for nested panels (e.g. report sub-cards). */
+  .glass-tile {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 16px;
+  }
+
+  /* Generic glass input — used by every text/url field across the app. */
+  .glass-input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    color: #ffffff;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .glass-input::placeholder {
+    color: rgba(255, 255, 255, 0.35);
+  }
+  .glass-input:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+  }
+
+  /* Primary indigo CTA used as Continue / Submit / Search / Ask buttons. */
+  .indigo-button {
+    background: #6366f1;
+    color: #ffffff;
+    border-radius: 12px;
+    font-weight: 600;
+    transition: background-color 150ms ease, box-shadow 200ms ease,
+      transform 100ms ease;
+  }
+  .indigo-button:hover:not(:disabled) {
+    background: #5b5fe8;
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+  }
+  .indigo-button:active:not(:disabled) {
+    transform: scale(0.99);
+  }
+  .indigo-button:disabled {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.4);
+    cursor: not-allowed;
+  }
+
+  /* Frosted top-nav bar used on dashboards. */
+  .top-nav {
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+}
