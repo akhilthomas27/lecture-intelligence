@@ -1,48 +1,60 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { getStoredUserName } from "@/lib/role";
 import SwitchRoleButton from "@/components/SwitchRoleButton";
 
-/**
- * Shared top bar for the input pages (student/faculty/provost).
- *
- * Visual: full-width strip outside the main glass card.
- *   Left:  "Hi, {name}" if a userName is in localStorage,
- *          otherwise the wordmark "Lecture Intelligence".
- *   Right: optional children (e.g. role pill) + "Switch role".
- *
- * Dashboards use a different `top-nav` styled bar — this is for input pages.
- */
 export default function RoleHeader({
   children,
 }: {
   children?: React.ReactNode;
 }) {
-  // localStorage isn't available during SSR — defer the read so the server-
-  // rendered HTML matches what the browser eventually shows.
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     setName(getStoredUserName());
   }, []);
 
   return (
-    <header className="flex items-center justify-between gap-3 max-w-5xl mx-auto px-4 sm:px-6 py-5">
-      <div className="text-xs sm:text-sm truncate">
+    <header className="flex items-center gap-3">
+      {/* Logo */}
+      <Image
+        src="/logo.png"
+        alt="Lecture Intelligence"
+        width={36}
+        height={36}
+        style={{ objectFit: "contain", borderRadius: 8 }}
+        priority
+      />
+
+      {/* Greeting or wordmark */}
+      <div className="text-xs sm:text-sm">
         {name ? (
           <span className="text-white/60">
-            Hi, <span className="text-white">{name}</span>
+            Hi,{" "}
+            <span className="text-white font-semibold">{name}</span>
           </span>
         ) : (
-          <span className="text-white/40 tracking-wide">
-            Lecture Intelligence
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 700,
+              color: "#ffffff",
+              letterSpacing: "-0.01em",
+            }}
+          >
+            Lecture{" "}
+            <span style={{ color: "#6366f1" }}>Intelligence</span>
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {children}
-        <SwitchRoleButton />
-      </div>
+
+      {/* Gap between wordmark and switch role */}
+      <div style={{ width: 12 }} />
+
+      {/* Children + switch role */}
+      {children}
+      <SwitchRoleButton />
     </header>
   );
 }

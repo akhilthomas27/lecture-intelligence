@@ -5,21 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { submitLecture } from "@/lib/api";
 
-const EXAMPLES = [
-  {
-    label: "3Blue1Brown — Neural networks",
-    url: "https://www.youtube.com/watch?v=aircAruvnKk",
-  },
-  {
-    label: "Karpathy — Let's build GPT",
-    url: "https://www.youtube.com/watch?v=kCc8FmEb1nY",
-  },
-  {
-    label: "3B1B — Essence of calculus",
-    url: "https://www.youtube.com/watch?v=WUvTyaaNkzM",
-  },
-];
-
 export default function StudentInputCard() {
   const router = useRouter();
   const [url, setUrl] = useState("");
@@ -46,12 +31,11 @@ export default function StudentInputCard() {
       transition={{ duration: 0.5, ease: "easeOut" }}
       className="w-full max-w-xl mx-auto"
     >
-      <div className="glass-card p-8 sm:p-10">
-        <RolePill emoji="🎓" label="Student" />
-        <h1 className="text-2xl sm:text-3xl font-bold text-white mt-5 mb-2">
+      <div className="glass-card w-full max-w-2xl p-8 sm:p-10 border border-white/20 shadow-2xl shadow-black/40">
+        <h1 className="text-center text-2xl sm:text-3xl font-bold text-white mb-2">
           Student Study Hub
         </h1>
-        <p className="text-sm text-white/50 mb-7">
+        <p className="text-center text-sm text-white/50 mb-7">
           Turn any lecture into a complete study environment.
         </p>
 
@@ -82,12 +66,6 @@ export default function StudentInputCard() {
           )}
         </form>
       </div>
-
-      <ExampleLinks
-        examples={EXAMPLES}
-        onPick={(u) => setUrl(u)}
-        disabled={loading}
-      />
     </motion.div>
   );
 }

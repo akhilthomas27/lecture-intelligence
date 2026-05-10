@@ -3,15 +3,6 @@
 import { useRouter } from "next/navigation";
 import { clearStoredUserType } from "@/lib/role";
 
-/**
- * Top-right "Switch role" link that wipes the stored user type and
- * sends the user back to the onboarding page where they can re-pick.
- * The stored userName is preserved — we only clear the role.
- *
- * Visual: minimal — gray text, no background, hover turns white. A small
- * arrow glyph nudges right on hover so the affordance is obvious without
- * adding chrome.
- */
 export default function SwitchRoleButton() {
   const router = useRouter();
 
@@ -24,21 +15,26 @@ export default function SwitchRoleButton() {
     <button
       type="button"
       onClick={handleClick}
-      className="group inline-flex items-center gap-1.5 text-xs sm:text-sm text-white/50 hover:text-white transition-colors px-2 py-1"
+      className="group inline-flex items-center gap-1.5 text-xs sm:text-sm transition-colors px-3 py-1.5"
+      style={{
+        color: "#ffffff",
+        fontWeight: 700,
+        border: "1.5px solid rgb(255, 255, 255)",
+        borderRadius: 8,
+        background: "rgba(255, 255, 255, 0.05)",
+        transition: "border-color 150ms ease, background 150ms ease",
+      }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor = "#6366f1";
+        (e.currentTarget as HTMLButtonElement).style.background = "rgba(99, 102, 241, 0.1)";
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255, 255, 255, 0.4)";
+        (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.05)";
+      }}
     >
       <span>Switch role</span>
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 12 12"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        className="transition-transform duration-150 group-hover:translate-x-0.5"
-        aria-hidden
-      >
-        <path d="M3 6h6M6.5 3.5L9 6 6.5 8.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      
     </button>
   );
 }

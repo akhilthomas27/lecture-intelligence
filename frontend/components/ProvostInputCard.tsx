@@ -4,7 +4,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { submitProvostCourse } from "@/lib/api";
-import { RolePill } from "@/components/StudentInputCard";
 
 const MAX_URLS = 10;
 
@@ -61,14 +60,12 @@ export default function ProvostInputCard() {
       className="w-full max-w-2xl mx-auto"
     >
       <div className="glass-card p-8 sm:p-10">
-        <RolePill emoji="📊" label="Provost" />
-        <h1 className="text-2xl sm:text-3xl font-bold text-white mt-5 mb-2">
+        <h1 className="text-center text-2xl sm:text-3xl font-bold text-white mb-2">
           Curriculum Coverage Map
         </h1>
-        <p className="text-sm text-white/50 mb-7">
+        <p className="text-center text-sm text-white/50 mb-7">
           Verify your course is delivering on its stated learning objectives.
         </p>
-
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Lecture URLs */}
           <section>

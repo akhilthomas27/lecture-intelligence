@@ -5,8 +5,8 @@
 @layer base {
   html,
   body {
-    background-color: #000000;
-    color: #ffffff;
+    background-color: #ffffff;
+    color: #000000;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     min-height: 100vh;
@@ -46,7 +46,7 @@
   /* Reusable frosted-glass card (used by onboarding + input + processing
      + every dashboard panel). Exact values per spec. */
   .glass-card {
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(0, 0, 0, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.08);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -62,9 +62,9 @@
 
   /* Generic glass input — used by every text/url field across the app. */
   .glass-input {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 16px;
     color: #ffffff;
     transition: border-color 150ms ease, box-shadow 150ms ease;
   }
