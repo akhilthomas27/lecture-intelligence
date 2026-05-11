@@ -14,6 +14,7 @@ import {
   type ProvostReportResponse,
 } from "@/lib/api";
 import SwitchRoleButton from "@/components/SwitchRoleButton";
+import Image from "next/image";
 
 // ---------------------------------------------------------------------------
 // Per-status accent palette
@@ -152,14 +153,24 @@ export default function ProvostReport({ jobId }: { jobId: string }) {
 
 function ProvostTopNav() {
   return (
-    <header className="top-nav flex items-center justify-between gap-3 px-4 sm:px-6 h-14 shrink-0">
-      <Link
-        href="/"
-        className="text-white text-sm font-medium tracking-tight hover:text-indigo-300 transition-colors"
-      >
-        Lecture Intelligence
+    <header
+      className="top-nav flex items-center gap-3 px-4 sm:px-6 h-14 shrink-0"
+      style={{ backgroundColor: "rgba(37, 35, 36, 1)" }}
+    >
+      <Link href="/" className="flex items-center gap-3">
+        <Image
+          src="/logo.png"
+          alt="Lecture Intelligence"
+          width={100}
+          height={100}
+          style={{ objectFit: "contain", borderRadius: 1 }}
+          priority
+        />
       </Link>
-      <SwitchRoleButton />
+      <div className="flex-1" />
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <SwitchRoleButton />
+      </div>
     </header>
   );
 }
@@ -330,7 +341,7 @@ function ObjectiveCard({ objective }: { objective: CurriculumObjective }) {
       animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl p-4 sm:p-5 space-y-3"
       style={{
-        background: "rgba(255,255,255,0.03)",
+        background: "rgba(37, 35, 36, 1)",
         border: "1px solid rgba(255,255,255,0.06)",
         borderLeft: `3px solid ${meta.color}`,
       }}
@@ -442,7 +453,7 @@ function LectureCard({ lecture }: { lecture: CurriculumLecture }) {
       animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl p-4 sm:p-5"
       style={{
-        background: "rgba(255,255,255,0.03)",
+        background: "rgba(37, 35, 36, 1)",
         border: "1px solid rgba(255,255,255,0.06)",
       }}
     >
@@ -557,7 +568,7 @@ function RecommendationCard({
       animate={{ opacity: 1, x: 0 }}
       className="rounded-2xl p-4 sm:p-5 flex gap-4"
       style={{
-        background: "rgba(255,255,255,0.03)",
+        background: "rgba(37, 35, 36, 1)",
         border: "1px solid rgba(255,255,255,0.06)",
         borderLeft: isTop
           ? "3px solid #f59e0b"

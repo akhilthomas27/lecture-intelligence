@@ -58,13 +58,13 @@ export default function Flashcard({
       >
         {/* Front — question */}
         <div className="absolute inset-0 [backface-visibility:hidden] glass-card p-7 sm:p-9 flex flex-col justify-between">
-          <p className="text-[10px] uppercase tracking-[0.22em] text-indigo-400">
+          <p className="text-[15px] uppercase tracking-[0.22em] text-indigo-400">
             Question
           </p>
           <p className="text-xl sm:text-2xl font-semibold text-white leading-snug">
             {card.question}
           </p>
-          <div className="flex items-center justify-between text-[11px] text-white/35">
+          <div className="flex items-center justify-between text-[11px] text-white">
             <span>Click or press Space to flip</span>
             <FlipIcon />
           </div>
@@ -74,11 +74,11 @@ export default function Flashcard({
         <div
           className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] glass-card p-7 sm:p-9 flex flex-col"
           style={{
-            background: "rgba(99,102,241,0.06)",
-            border: "1px solid rgba(99,102,241,0.25)",
+            background: "rgba(37, 35, 36, 1)",
+            border: "1px solid rgba(37, 35, 36, 1)",
           }}
         >
-          <p className="text-[10px] uppercase tracking-[0.22em] text-indigo-300 mb-3">
+          <p className="text-[15px] uppercase tracking-[0.22em] text-indigo-300 mb-3">
             Answer
           </p>
           <p className="text-base sm:text-lg text-white leading-relaxed mb-3 flex-1 overflow-y-auto">

@@ -3,9 +3,9 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { submitProvostCourse } from "@/lib/api";
+import { submitProvostCourse, validatePlaylist } from "@/lib/api";
 
-const MAX_URLS = 10;
+const MAX_URLS = 15;
 
 export default function ProvostInputCard() {
   const router = useRouter();
@@ -13,6 +13,12 @@ export default function ProvostInputCard() {
   const [objectives, setObjectives] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Playlist state
+  const [playlistUrl, setPlaylistUrl] = useState("");
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistError, setPlaylistError] = useState<string | null>(null);
+  const [playlistSuccess, setPlaylistSuccess] = useState<string | null>(null);
 
   function setUrlAt(idx: number, value: string) {
     setUrls((prev) => prev.map((u, i) => (i === idx ? value : u)));
@@ -26,6 +32,39 @@ export default function ProvostInputCard() {
     setUrls((prev) =>
       prev.length === 1 ? prev : prev.filter((_, i) => i !== idx),
     );
+  }
+
+  // Fetch playlist and populate URL inputs
+  async function handleImportPlaylist() {
+    if (!playlistUrl.trim()) {
+      setPlaylistError("Enter a YouTube playlist URL first.");
+      return;
+    }
+    setPlaylistError(null);
+    setPlaylistSuccess(null);
+    setPlaylistLoading(true);
+
+    try {
+      const result = await validatePlaylist(playlistUrl.trim());
+      const newUrls = result.videos.map((v) => v.url);
+      // Fill existing inputs and add more if needed
+      setUrls(newUrls.length > 0 ? newUrls : [""]);
+      setPlaylistUrl("");
+      setPlaylistSuccess(
+        `Imported ${result.video_count} lecture${result.video_count === 1 ? "" : "s"} from playlist.`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to fetch playlist";
+      // Try to parse the detail from FastAPI error
+      try {
+        const parsed = JSON.parse(msg);
+        setPlaylistError(parsed.error ?? msg);
+      } catch {
+        setPlaylistError(msg);
+      }
+    } finally {
+      setPlaylistLoading(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -66,8 +105,123 @@ export default function ProvostInputCard() {
         <p className="text-center text-sm text-white/50 mb-7">
           Verify your course is delivering on its stated learning objectives.
         </p>
+
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Lecture URLs */}
+
+          {/* ── Course URL (playlist import) ── */}
+          <section>
+            <label className="block text-xs sm:text-sm text-white/70 mb-2.5">
+              Course URL
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: 11,
+                  color: "rgba(255,255,255,0.3)",
+                  fontWeight: 400,
+                }}
+              >
+                Import all lectures from a YouTube playlist
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                inputMode="url"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="https://youtube.com/playlist?list=..."
+                value={playlistUrl}
+                onChange={(e) => {
+                  setPlaylistUrl(e.target.value);
+                  setPlaylistError(null);
+                  setPlaylistSuccess(null);
+                }}
+                className="glass-input flex-1 px-4 py-3 text-sm min-w-0"
+              />
+              <button
+                type="button"
+                onClick={handleImportPlaylist}
+                disabled={playlistLoading || !playlistUrl.trim()}
+                className="shrink-0 px-4 py-3 rounded-xl text-sm font-semibold transition-all"
+                style={{
+                  background: playlistLoading || !playlistUrl.trim()
+                    ? "rgba(255,255,255,0.05)"
+                    : "rgba(99,102,241,0.85)",
+                  color: playlistLoading || !playlistUrl.trim()
+                    ? "rgba(255,255,255,0.3)"
+                    : "#ffffff",
+                  border: "1px solid rgba(99,102,241,0.3)",
+                  cursor: playlistLoading || !playlistUrl.trim()
+                    ? "not-allowed"
+                    : "pointer",
+                  minWidth: 90,
+                }}
+              >
+                {playlistLoading ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <motion.span
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                      style={{
+                        display: "block",
+                        width: 12, height: 12,
+                        borderRadius: "50%",
+                        border: "2px solid rgba(255,255,255,0.2)",
+                        borderTopColor: "#ffffff",
+                      }}
+                    />
+                    Loading
+                  </span>
+                ) : (
+                  "Import"
+                )}
+              </button>
+            </div>
+
+            {/* Playlist feedback messages */}
+            <AnimatePresence>
+              {playlistError && (
+                <motion.p
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="text-rose-400 text-xs mt-2"
+                  role="alert"
+                >
+                  {playlistError}
+                </motion.p>
+              )}
+              {playlistSuccess && (
+                <motion.p
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  style={{ color: "#10b981", fontSize: 12, marginTop: 6 }}
+                >
+                  ✓ {playlistSuccess}
+                </motion.p>
+              )}
+            </AnimatePresence>
+
+            {/* Divider */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                marginTop: 16,
+              }}
+            >
+              <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+                or add lectures individually
+              </span>
+              <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
+            </div>
+          </section>
+
+          {/* ── Individual Lecture URLs ── */}
           <section>
             <div className="flex items-baseline justify-between mb-2.5">
               <label className="text-xs sm:text-sm text-white/70">
@@ -140,7 +294,7 @@ export default function ProvostInputCard() {
             </button>
           </section>
 
-          {/* Objectives (mandatory) */}
+          {/* ── Learning Objectives ── */}
           <section>
             <label
               htmlFor="objectives"
@@ -169,6 +323,7 @@ export default function ProvostInputCard() {
           >
             {loading ? "Building coverage map…" : "Build coverage map"}
           </button>
+
           {error && (
             <p className="text-rose-400 text-sm" role="alert">
               {error}
@@ -177,8 +332,6 @@ export default function ProvostInputCard() {
         </form>
       </div>
 
-      {/* CSS-only hover state for the dashed "Add another lecture" button —
-          tailwind doesn't have a clean way to swap dashed↔solid on hover. */}
       <style jsx>{`
         .add-lecture-btn:hover:not(:disabled) {
           background: rgba(99, 102, 241, 0.06) !important;

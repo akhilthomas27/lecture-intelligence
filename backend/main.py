@@ -311,6 +311,43 @@ async def get_results(job_id: str) -> dict[str, Any]:
 
     return {"job_id": job_id, "status": status, "result": job["result"]}
 
+@app.get("/api/validate-playlist")
+@limiter.limit("10/hour")
+async def validate_playlist(request: Request, url: str) -> dict[str, Any]:
+    """Fetch all video URLs from a YouTube playlist.
+    
+    Returns video list if playlist has 15 or fewer videos.
+    Returns error if playlist has more than 15 videos.
+    """
+    from agents.provost.playlist_agent import fetch_playlist_videos
+    
+    if not url:
+        raise HTTPException(status_code=400, detail="url parameter is required")
+    
+    result = await asyncio.to_thread(fetch_playlist_videos, url)
+    
+    if not result.get("success"):
+        error_type = result.get("error_type", "unknown")
+        status_code = (
+            400 if error_type in {"invalid_url", "too_many_videos", "empty_playlist"}
+            else 401 if error_type == "no_api_key"
+            else 429 if error_type == "rate_limited"
+            else 500
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "error_type": error_type,
+                "error": result.get("error"),
+                "video_count": result.get("video_count"),
+            },
+        )
+    
+    return {
+        "success": True,
+        "video_count": result["video_count"],
+        "videos": result["videos"],
+    }
 
 @app.post("/api/search")
 @limiter.limit("10/hour")

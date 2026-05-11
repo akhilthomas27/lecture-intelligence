@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import SwitchRoleButton from "@/components/SwitchRoleButton";
 import TimestampButton from "@/components/TimestampButton";
+import Image from "next/image";
 import YouTubePlayer, {
   type YouTubePlayerHandle,
 } from "@/components/YouTubePlayer";
@@ -121,7 +122,7 @@ export default function FacultyReport({ jobId }: { jobId: string }) {
 
   return (
     <main className="h-screen flex flex-col">
-      <FacultyTopNav videoTitle={`Video ${data.video_id ?? ""}`} />
+      <FacultyTopNav />
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[55%_45%] min-h-0 overflow-hidden">
         {/* ----- Left ----- */}
@@ -131,24 +132,19 @@ export default function FacultyReport({ jobId }: { jobId: string }) {
           ) : (
             <div className="w-full aspect-video bg-black rounded-xl border border-white/[0.06]" />
           )}
-          <div className="flex items-baseline gap-3 mt-2">
-            <h1 className="text-lg sm:text-xl font-semibold text-white">
-              Lecture Audit Report
-            </h1>
-            <PrivateBadge />
-          </div>
-          <p className="text-xs text-white/40">
-            Private — only visible to you. Nothing is shared or saved beyond
-            this session.
-          </p>
         </section>
 
         {/* ----- Right (scrollable report) ----- */}
         <section
           className="flex flex-col min-h-0 lg:border-l overflow-y-auto"
-          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+          style={{ borderWidth: "4px", borderColor: "rgba(255, 255, 255, 0.08)" }}
         >
           <div className="p-4 sm:p-6 space-y-6">
+            <StrengthsCard
+              strengths={data.audit_report.strengths}
+              onSeek={seekTo}
+            />
+            
             <PriorityFixCard
               fix={data.audit_report.priority_fix}
               onSeek={seekTo}
@@ -156,11 +152,6 @@ export default function FacultyReport({ jobId }: { jobId: string }) {
 
             <FindingsByDimension
               findings={data.audit_report.findings}
-              onSeek={seekTo}
-            />
-
-            <StrengthsCard
-              strengths={data.audit_report.strengths}
               onSeek={seekTo}
             />
           </div>
@@ -174,19 +165,26 @@ export default function FacultyReport({ jobId }: { jobId: string }) {
 // Top nav (frosted)
 // ---------------------------------------------------------------------------
 
-function FacultyTopNav({ videoTitle }: { videoTitle: string }) {
+function FacultyTopNav() {
   return (
-    <header className="top-nav flex items-center gap-3 px-4 sm:px-6 h-14 shrink-0">
-      <Link
-        href="/"
-        className="text-white text-sm font-medium tracking-tight hover:text-indigo-300 transition-colors shrink-0"
-      >
-        Lecture Intelligence
+    <header
+      className="top-nav flex items-center gap-3 px-4 sm:px-6 h-14 shrink-0"
+      style={{ backgroundColor: "rgba(37, 35, 36, 1)" }}
+    >
+      <Link href="/" className="flex items-center gap-3">
+        <Image
+          src="/logo.png"
+          alt="Lecture Intelligence"
+          width={100}
+          height={100}
+          style={{ objectFit: "contain", borderRadius: 1 }}
+          priority
+        />
       </Link>
-      <div className="flex-1 text-center text-xs sm:text-sm text-white/45 truncate min-w-0 px-2 hidden sm:block">
-        {videoTitle}
+      <div className="flex-1" />
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <SwitchRoleButton />
       </div>
-      <SwitchRoleButton />
     </header>
   );
 }
@@ -221,7 +219,7 @@ function PriorityFixCard({
     <article
       className="p-5 sm:p-6 rounded-2xl space-y-4"
       style={{
-        background: "rgba(245,158,11,0.04)",
+        backgroundColor: "rgba(37, 35, 36, 1)",
         border: "1px solid rgba(245,158,11,0.30)",
         boxShadow: "0 0 24px rgba(245,158,11,0.08)",
       }}
@@ -303,6 +301,77 @@ function Block({
 }
 
 // ---------------------------------------------------------------------------
+// Strengths
+// ---------------------------------------------------------------------------
+
+function StrengthsCard({
+  strengths,
+  onSeek,
+}: {
+  strengths: AuditStrength[];
+  onSeek: (seconds: number) => void;
+}) {
+  if (!strengths?.length) return null;
+  return (
+    <section
+      className="p-4 sm:p-5 rounded-2xl space-y-3"
+      style={{
+        backgroundColor: "rgba(37, 35, 36, 1)",
+        border: "1px solid rgba(16,185,129,0.20)",
+      }}
+    >
+      <header className="flex items-center justify-between gap-3 mb-1">
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.2em] font-semibold"
+          style={{ color: "#34d399" }}
+        >
+          <span aria-hidden>✓</span>
+          Strengths
+        </span>
+        <span
+          className="text-[11px] px-2 py-0.5 rounded-full"
+          style={{
+            background: "rgba(16,185,129,0.12)",
+            color: "#34d399",
+          }}
+        >
+          {strengths.length}
+        </span>
+      </header>
+      <p className="text-xs text-white/55 leading-relaxed">
+        Things you&apos;re doing well — keep it up.
+      </p>
+      {strengths.map((s, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: i * 0.04 }}
+          className="rounded-xl p-3 sm:p-4"
+          style={{
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderLeft: "2px solid #10b981",
+          }}
+        >
+          <div className="flex items-baseline justify-between gap-3 mb-1">
+            <h3 className="font-medium text-sm text-white">{s.title}</h3>
+            <TimestampButton
+              seconds={s.timestamp}
+              onSeek={onSeek}
+              tone="green"
+            />
+          </div>
+          <p className="text-sm text-white/75 leading-relaxed">
+            {s.description}
+          </p>
+        </motion.div>
+      ))}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Full audit — collapsible per-dimension sections
 // ---------------------------------------------------------------------------
 
@@ -354,7 +423,7 @@ function DimensionSection({
     <section
       className="rounded-2xl overflow-hidden"
       style={{
-        background: meta.bgTint,
+        backgroundColor: "rgba(37, 35, 36, 1)",
         border: `1px solid ${meta.color}33`,
         borderLeft: `3px solid ${meta.color}`,
       }}
@@ -490,76 +559,7 @@ function FindingRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Strengths
-// ---------------------------------------------------------------------------
 
-function StrengthsCard({
-  strengths,
-  onSeek,
-}: {
-  strengths: AuditStrength[];
-  onSeek: (seconds: number) => void;
-}) {
-  if (!strengths?.length) return null;
-  return (
-    <section
-      className="p-4 sm:p-5 rounded-2xl space-y-3"
-      style={{
-        background: "rgba(16,185,129,0.04)",
-        border: "1px solid rgba(16,185,129,0.20)",
-      }}
-    >
-      <header className="flex items-center justify-between gap-3 mb-1">
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.2em] font-semibold"
-          style={{ color: "#34d399" }}
-        >
-          <span aria-hidden>✓</span>
-          Strengths
-        </span>
-        <span
-          className="text-[11px] px-2 py-0.5 rounded-full"
-          style={{
-            background: "rgba(16,185,129,0.12)",
-            color: "#34d399",
-          }}
-        >
-          {strengths.length}
-        </span>
-      </header>
-      <p className="text-xs text-white/55 leading-relaxed">
-        Things you&apos;re doing well — keep it up.
-      </p>
-      {strengths.map((s, i) => (
-        <motion.div
-          key={i}
-          initial={{ opacity: 0, x: -6 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: i * 0.04 }}
-          className="rounded-xl p-3 sm:p-4"
-          style={{
-            background: "rgba(255,255,255,0.03)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderLeft: "2px solid #10b981",
-          }}
-        >
-          <div className="flex items-baseline justify-between gap-3 mb-1">
-            <h3 className="font-medium text-sm text-white">{s.title}</h3>
-            <TimestampButton
-              seconds={s.timestamp}
-              onSeek={onSeek}
-              tone="green"
-            />
-          </div>
-          <p className="text-sm text-white/75 leading-relaxed">
-            {s.description}
-          </p>
-        </motion.div>
-      ))}
-    </section>
-  );
-}
 
 // Re-export so consumers that want the type still resolve it.
 export type { AuditReport };

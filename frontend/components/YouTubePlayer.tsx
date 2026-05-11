@@ -9,17 +9,14 @@ import YouTube, {
 export interface YouTubePlayerHandle {
   /** Seek to ``seconds`` and start playback. */
   seekTo: (seconds: number) => void;
+  /** Returns current playback position in seconds. */
+  getCurrentTime: () => number;
 }
 
 interface Props {
   videoId: string;
 }
 
-/**
- * Thin wrapper around the YouTube IFrame Player API. The parent grabs an
- * imperative handle via ``ref`` and calls ``seekTo(seconds)`` from anywhere
- * in the dashboard (outline rows, flashcards, search hits, etc.).
- */
 const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(
   function YouTubePlayer({ videoId }, ref) {
     const playerRef = useRef<YTPlayer | null>(null);
@@ -29,6 +26,10 @@ const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(
         if (!playerRef.current) return;
         playerRef.current.seekTo(seconds, true);
         playerRef.current.playVideo();
+      },
+      getCurrentTime: () => {
+        if (!playerRef.current) return 0;
+        return playerRef.current.getCurrentTime() ?? 0;
       },
     }));
 

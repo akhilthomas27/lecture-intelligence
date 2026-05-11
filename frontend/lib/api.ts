@@ -354,3 +354,25 @@ export function formatTime(seconds: number): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
+
+
+export interface PlaylistVideo {
+  url: string;
+  title: string;
+}
+
+export interface PlaylistValidationResponse {
+  success: boolean;
+  video_count: number;
+  videos: PlaylistVideo[];
+}
+
+export async function validatePlaylist(
+  playlistUrl: string,
+): Promise<PlaylistValidationResponse> {
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/api/validate-playlist?url=${encodeURIComponent(playlistUrl)}`,
+    { cache: "no-store" },
+  );
+  return (await ensureOk(res)).json();
+}
