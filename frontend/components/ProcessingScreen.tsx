@@ -229,7 +229,9 @@ export default function ProcessingScreen({ jobId, type }: Props) {
         <p className="text-[11px] sm:text-xs text-white/40 text-center">
           {hasError
             ? "The pipeline couldn't finish — see the error below."
-            : "This usually takes 60–90 seconds for a typical lecture."}
+            : type === "provost"
+              ? "This usually takes 90–180 minutes depending on the number of lectures."
+              : "This usually takes 60–120 seconds for a typical lecture."}
         </p>
 
         {/* ---- Pulsing dots ------------------------------------------- */}

@@ -398,7 +398,7 @@ function FindingsByDimension({
           dimension={dim}
           findings={items}
           onSeek={onSeek}
-          defaultOpen={i === 0}
+          defaultOpen={false}
         />
       ))}
     </div>
