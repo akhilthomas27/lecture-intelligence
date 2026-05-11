@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { submitProvostCourse, validatePlaylist } from "@/lib/api";
 
-const MAX_URLS = 15;
+const MAX_URLS = 13;
 
 export default function ProvostInputCard() {
   const router = useRouter();

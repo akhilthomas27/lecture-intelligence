@@ -902,6 +902,7 @@ function SummaryView({ summaries }: { summaries: Summaries }) {
     { key: "summary_5min", label: "5 min" },
     { key: "full_summary", label: "Full" },
   ];
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap gap-2">
@@ -923,16 +924,144 @@ function SummaryView({ summaries }: { summaries: Summaries }) {
           );
         })}
       </div>
+
       <motion.article
         key={variant}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         className="glass-tile p-5"
       >
-        <p className="whitespace-pre-wrap leading-relaxed text-white text-[13px] sm:text-sm">
-          {summaries[variant]}
-        </p>
+        {variant === "summary_90s" ? (
+          /* 90 sec — plain prose, no headings */
+          <p className="whitespace-pre-wrap leading-relaxed text-white text-[13px] sm:text-sm">
+            {summaries[variant]}
+          </p>
+        ) : (
+          /* 5 min and Full — parse ## headings and render structured */
+          <StructuredSummary text={summaries[variant]} />
+        )}
       </motion.article>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Structured summary renderer
+// ---------------------------------------------------------------------------
+
+function StructuredSummary({ text }: { text: string }) {
+  if (!text) {
+    return (
+      <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
+        No summary available.
+      </p>
+    );
+  }
+
+  // Split text into blocks by ## headings
+  const lines = text.split("\n");
+  
+  type Block =
+    | { type: "heading"; text: string }
+    | { type: "paragraph"; text: string };
+
+  const blocks: Block[] = [];
+  let currentParagraphLines: string[] = [];
+
+  function flushParagraph() {
+    const joined = currentParagraphLines.join("\n").trim();
+    if (joined) {
+      blocks.push({ type: "paragraph", text: joined });
+    }
+    currentParagraphLines = [];
+  }
+
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      flushParagraph();
+      blocks.push({ type: "heading", text: line.replace(/^##\s+/, "") });
+    } else {
+      currentParagraphLines.push(line);
+    }
+  }
+  flushParagraph();
+
+  // If no headings found at all — fall back to plain prose
+  const hasHeadings = blocks.some((b) => b.type === "heading");
+  if (!hasHeadings) {
+    return (
+      <p className="whitespace-pre-wrap leading-relaxed text-white text-[13px] sm:text-sm">
+        {text}
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {blocks.map((block, i) => {
+        if (block.type === "heading") {
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {/* Indigo accent bar */}
+              <div
+                style={{
+                  width: 3,
+                  height: 18,
+                  borderRadius: 2,
+                  background: "#6366f1",
+                  flexShrink: 0,
+                }}
+              />
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#ffffff",
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  margin: 0,
+                }}
+              >
+                {block.text}
+              </h3>
+            </div>
+          );
+        }
+
+        // Paragraph — split into individual paragraphs by blank lines
+        const subParagraphs = block.text
+          .split(/\n\s*\n/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+
+        return (
+          <div
+            key={i}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              // Indent paragraphs that follow a heading
+              paddingLeft: i > 0 && blocks[i - 1]?.type === "heading" ? 13 : 0,
+            }}
+          >
+            {subParagraphs.map((para, j) => (
+              <p
+                key={j}
+                style={{
+                  fontSize: 13,
+                  color: "rgba(255,255,255,0.8)",
+                  lineHeight: 1.75,
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {para}
+              </p>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

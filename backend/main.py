@@ -72,7 +72,7 @@ class ProcessRequest(BaseModel):
 
 
 class ProcessCourseRequest(BaseModel):
-    urls: list[str] = Field(..., min_length=1, max_length=10)
+    urls: list[str] = Field(..., min_length=1, max_length=13)
     objectives: str = Field(..., min_length=1)
 
     @field_validator("urls")

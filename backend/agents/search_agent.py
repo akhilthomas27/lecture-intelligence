@@ -1,7 +1,17 @@
 """Search agent.
 
-Uses Google's ``gemini-embedding-001`` model for embeddings, ChromaDB
-(in-memory) for vector search, and Gemini Flash for answer generation.
+Uses Google's ``gemini-embedding-001`` model for embeddings (free tier,
+no cost, good quality), ChromaDB (in-memory) for vector search, and
+Claude Sonnet 4.6 for answer generation.
+
+Why split models:
+- Embeddings: gemini-embedding-001 stays — free, fast, good enough for
+  semantic search. Switching embedding models would require re-indexing
+  all existing collections with a different vector space.
+- Answer generation: Claude Sonnet 4.6 replaces Gemini Flash — produces
+  significantly more natural, conversational study-buddy responses.
+  Claude leads writing quality benchmarks in May 2026 and has a 36%
+  hallucination rate vs Gemini's higher rates on Vectara benchmarks.
 
 Public API
 ----------
@@ -24,18 +34,19 @@ from threading import Lock
 from typing import Any
 
 import chromadb
+from anthropic import Anthropic
 from google import genai
 
 EMBEDDING_MODEL = "gemini-embedding-001"
-ANSWER_MODEL = "gemini-2.5-flash"
+ANSWER_MODEL = "claude-sonnet-4-6"
 DEFAULT_TOP_K = 3
 _EMBED_BATCH_SIZE = 100
 _TASK_DOCUMENT = "RETRIEVAL_DOCUMENT"
 _TASK_QUERY = "RETRIEVAL_QUERY"
+_MAX_ANSWER_TOKENS = 1024
 
 # Similarity threshold below which we consider the topic not covered.
 # gemini-embedding-001 cosine similarity: 1.0 = identical, 0.0 = unrelated.
-# Lectures rarely score below 0.55 on genuinely related questions.
 _RELEVANCE_THRESHOLD = 0.55
 
 # ---------------------------------------------------------------------------
@@ -45,11 +56,15 @@ _RELEVANCE_THRESHOLD = 0.55
 _genai_lock = Lock()
 _genai_client: Any = None
 
+_anthropic_lock = Lock()
+_anthropic_client: Any = None
+
 _chroma_lock = Lock()
 _chroma_client: Any = None
 
 
 def _get_genai_client() -> Any:
+    """Gemini client — used only for embeddings."""
     global _genai_client
     with _genai_lock:
         if _genai_client is None:
@@ -58,6 +73,18 @@ def _get_genai_client() -> Any:
                 raise RuntimeError("GEMINI_API_KEY is not set in the environment")
             _genai_client = genai.Client(api_key=api_key)
     return _genai_client
+
+
+def _get_anthropic_client() -> Any:
+    """Anthropic client — used for answer generation."""
+    global _anthropic_client
+    with _anthropic_lock:
+        if _anthropic_client is None:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
+            _anthropic_client = Anthropic(api_key=api_key)
+    return _anthropic_client
 
 
 def _get_chroma_client() -> Any:
@@ -73,7 +100,7 @@ def _collection_name(video_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Embedding helpers
+# Embedding helpers — Gemini (free, stays unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -81,7 +108,7 @@ def _embed_documents(texts: list[str]) -> list[list[float]]:
     client = _get_genai_client()
     out: list[list[float]] = []
     for i in range(0, len(texts), _EMBED_BATCH_SIZE):
-        batch = texts[i : i + _EMBED_BATCH_SIZE]
+        batch = texts[i: i + _EMBED_BATCH_SIZE]
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=batch,
@@ -102,13 +129,13 @@ def _embed_query(text: str) -> list[float]:
 
 
 # ---------------------------------------------------------------------------
-# Answer generation
+# Answer generation — Claude Sonnet 4.6
 # ---------------------------------------------------------------------------
 
 
 def _generate_answer(query: str, chunks: list[dict[str, Any]]) -> str:
-    """Send the top chunks to Gemini and ask it to answer like a study buddy."""
-    client = _get_genai_client()
+    """Send top chunks to Claude Sonnet 4.6 and generate a study buddy answer."""
+    client = _get_anthropic_client()
 
     # Build context from top chunks with timestamps
     context_parts = []
@@ -121,11 +148,14 @@ def _generate_answer(query: str, chunks: list[dict[str, Any]]) -> str:
         )
     context = "\n\n".join(context_parts)
 
-    prompt = f"""You are a knowledgeable and friendly study buddy helping a 
-student understand a lecture they are reviewing.
+    system_prompt = """You are a knowledgeable and friendly study buddy helping a
+student understand a lecture they are reviewing. You explain things clearly,
+naturally, and helpfully — like a brilliant teaching assistant would, not a robot.
 
-Below are the most relevant excerpts from the lecture transcript, each 
-tagged with a timestamp showing where in the lecture it appears.
+You only answer based on the lecture excerpts provided. You never make things up."""
+
+    user_prompt = f"""Here are the most relevant excerpts from the lecture transcript,
+each tagged with a timestamp showing where in the lecture it appears.
 
 LECTURE EXCERPTS:
 {context}
@@ -133,24 +163,24 @@ LECTURE EXCERPTS:
 STUDENT QUESTION:
 {query}
 
-Your task:
-- Answer the student's question clearly and helpfully based ONLY on 
-  what is covered in the lecture excerpts above
-- Explain concepts in plain language like a professor or tutor would
-- If the excerpts give enough information, give a complete explanation
-- Reference the timestamp naturally in your answer 
-  e.g. "Around the 5:30 mark, the lecturer explains..."
-- If the excerpts are only loosely related and don't really answer 
-  the question, say so honestly — don't make things up
-- Keep your answer focused and concise — 3 to 5 sentences is ideal
-- Do NOT say "based on the excerpts" or "according to the transcript" 
-  repeatedly — just explain it naturally as a study buddy would"""
+Answer the student's question clearly and helpfully based ONLY on what is
+covered in the lecture excerpts above. Explain concepts in plain language.
+Reference the timestamp naturally in your answer, e.g. "Around the 5:30 mark,
+the lecturer explains...". Keep your answer focused and concise — 3 to 5
+sentences is ideal. If the excerpts don't really answer the question, say so
+honestly. Do NOT say "based on the excerpts" or "according to the transcript"
+repeatedly — just explain it naturally as a study buddy would."""
 
-    result = client.models.generate_content(
+    message = client.messages.create(
         model=ANSWER_MODEL,
-        contents=prompt,
+        max_tokens=_MAX_ANSWER_TOKENS,
+        system=system_prompt,
+        messages=[
+            {"role": "user", "content": user_prompt}
+        ],
     )
-    return result.text.strip()
+
+    return message.content[0].text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +256,7 @@ def search(
     query: str,
     top_k: int = DEFAULT_TOP_K,
 ) -> list[dict[str, Any]]:
-    """Original retrieval only — returns raw chunks ranked by similarity.
+    """Raw similarity search — returns ranked transcript chunks.
     Kept for backwards compatibility. Use answer() for study buddy responses.
     """
     if not query or not query.strip():
@@ -276,20 +306,16 @@ def answer(
     Returns:
         {
             "answer": str,
-            "covered": bool,       True if the topic is in the lecture
+            "covered": bool,
             "source_timestamp": float | None,
             "source_text": str | None,
             "similarity_score": float | None,
         }
-
-    The answer field always contains a human readable response:
-        - If covered: a study buddy explanation grounded in the lecture
-        - If not covered: a friendly message saying it is not in the lecture
     """
     if not query or not query.strip():
         raise ValueError("query is empty")
 
-    # Step 1 — retrieve top matching chunks
+    # Step 1 — retrieve top matching chunks via Gemini embeddings
     chroma = _get_chroma_client()
     name = _collection_name(video_id)
     try:
@@ -319,7 +345,7 @@ def answer(
             "similarity_score": None,
         }
 
-    # Step 2 — check if best match is relevant enough
+    # Step 2 — check relevance threshold
     best_score = 1.0 - float(distances[0]) if distances[0] is not None else 0.0
 
     if best_score < _RELEVANCE_THRESHOLD:
@@ -335,7 +361,7 @@ def answer(
             "similarity_score": round(best_score, 3),
         }
 
-    # Step 3 — build chunk list with metadata for answer generation
+    # Step 3 — build chunk list for answer generation
     top_chunks = []
     for doc, meta, dist in zip(docs, metas, distances):
         meta = meta or {}
@@ -347,11 +373,11 @@ def answer(
             }
         )
 
-    # Step 4 — generate study buddy answer
+    # Step 4 — generate answer via Claude Sonnet 4.6
     try:
         generated_answer = _generate_answer(query, top_chunks)
     except Exception as exc:  # noqa: BLE001
-        # Fall back to showing the raw transcript chunk if Gemini fails
+        # Fall back to raw transcript chunk if Claude call fails
         generated_answer = top_chunks[0]["text"]
 
     return {

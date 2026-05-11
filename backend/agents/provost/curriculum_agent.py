@@ -35,7 +35,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-3.1-pro-preview"
 TEMPERATURE = 0.2
 
 _REQUIRED_KEYS = {"summary", "objectives", "lectures", "recommendations"}
@@ -183,6 +183,11 @@ def map_curriculum(
             model=MODEL,
             google_api_key=api_key,
             temperature=TEMPERATURE,
+            generation_config={
+                "thinking_config": {
+                    "thinking_budget": 0  # Disable thinking for JSON output tasks
+                }
+            }
         )
         response = llm.invoke(
             [
@@ -197,11 +202,21 @@ def map_curriculum(
             "error": f"Gemini call failed: {exc}",
         }
 
-    raw = (
-        response.content
-        if isinstance(response.content, str)
-        else str(response.content)
-    )
+    if isinstance(response.content, str):
+        raw = response.content
+    elif isinstance(response.content, list):
+        raw = ""
+        for block in response.content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                raw = block.get("text", "")
+                break
+            elif hasattr(block, "type") and block.type == "text":
+                raw = block.text
+                break
+        if not raw:
+            raw = str(response.content[0]) if response.content else ""
+    else:
+        raw = str(response.content)
 
     try:
         data = _parse_json(raw)
@@ -233,14 +248,37 @@ def map_curriculum(
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
+    """Best-effort extraction of a JSON object from a model response.
+    
+    Handles:
+    - ```json ... ``` fences
+    - ``` ... ``` fences  
+    - Reasoning text before the JSON (Gemini 3.1 Pro thinking mode)
+    - Extra prose after the JSON
+    """
     cleaned = raw.strip()
+
+    # Strip ```json ... ``` or ``` ... ``` fences
     if cleaned.startswith("```"):
-        nl = cleaned.find("\n")
-        if nl != -1:
-            cleaned = cleaned[nl + 1 :]
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            cleaned = cleaned[first_newline + 1:]
         if cleaned.rstrip().endswith("```"):
             cleaned = cleaned.rstrip()[:-3].rstrip()
-    start, end = cleaned.find("{"), cleaned.rfind("}")
+
+    # Find the outermost { ... } — handles reasoning text before/after JSON
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        raise ValueError("no JSON object found in response")
-    return json.loads(cleaned[start : end + 1])
+        raise ValueError(f"No JSON object found in response. Raw response: {raw[:200]}")
+
+    json_str = cleaned[start: end + 1]
+
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        # Last resort — try to fix common Gemini issues
+        # Remove any trailing commas before } or ]
+        import re
+        json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+        return json.loads(json_str)

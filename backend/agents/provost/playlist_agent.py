@@ -18,7 +18,7 @@ SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
 _SUPADATA_PLAYLIST_ENDPOINT = "https://api.supadata.ai/v1/youtube/playlist"
 _SUPADATA_PLAYLIST_VIDEOS_ENDPOINT = "https://api.supadata.ai/v1/youtube/playlist/videos"
 _REQUEST_TIMEOUT = 30.0
-_MAX_VIDEOS = 15
+_MAX_VIDEOS = 13
 
 _PLAYLIST_ID_RE = re.compile(r"(?:list=)([A-Za-z0-9_-]+)")
 

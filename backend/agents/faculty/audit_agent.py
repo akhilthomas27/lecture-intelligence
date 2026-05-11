@@ -1,9 +1,19 @@
 """Faculty audit agent.
 
-Takes a list of transcript chunks (from the ingestion agent) and asks Gemini
-to produce a comprehensive lecture audit covering pedagogical clarity,
-accessibility, equity & inclusion, and language & tone — the kind of
+Takes a list of transcript chunks (from the ingestion agent) and asks
+Claude Opus 4.7 to produce a comprehensive lecture audit covering pedagogical
+clarity, accessibility, equity & inclusion, and language & tone — the kind of
 private feedback a faculty member would want before going live.
+
+Claude Opus 4.7 is used here specifically because:
+- This is the highest stakes task in the app — feedback directly affects
+  a professor's teaching and goes live to hundreds of students
+- Leads SWE-bench Pro at 64.3% for complex multi-step analysis (May 2026)
+- Produces the most nuanced, natural prose of any model
+- 36% hallucination rate vs competitors — critical when citing verbatim
+  quotes and making specific pedagogical claims about real people's work
+- The cost premium ($15/$75 per 1M tokens) is justified here: faculty
+  audit runs once per lecture, not on every student query
 
 Public API
 ----------
@@ -27,11 +37,13 @@ import json
 import os
 from typing import Any
 
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 
-MODEL = "gemini-2.5-flash"
-TEMPERATURE = 0.3
+# Claude Opus 4.7 — highest quality model for high-stakes faculty feedback
+# Most capable reasoning + best prose quality as of May 2026
+MODEL = "claude-opus-4-7"
+MAX_TOKENS = 8192
 
 _REQUIRED_KEYS = {"priority_fix", "findings", "strengths"}
 
@@ -40,6 +52,10 @@ lecture for a faculty member who wants to improve. Your feedback is private,
 specific, evidence-grounded, and kind. You always cite a verbatim quote from
 the transcript when flagging an issue, and you always propose a concrete
 rewrite the faculty could actually deliver.
+
+You write with the empathy of a trusted colleague and the precision of an
+expert. Your goal is to help this faculty member become a better teacher —
+not to judge them. Every criticism comes with a path forward.
 
 Evaluate the lecture across these four dimensions:
 
@@ -116,12 +132,12 @@ Constraints:
 
 
 def audit_lecture(chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    """Send chunks to Gemini and return a structured lecture audit.
+    """Send chunks to Claude Opus 4.7 and return a structured lecture audit.
 
     Possible ``error_type`` values:
         - ``no_chunks``         the chunks list was empty
-        - ``no_api_key``        ``GEMINI_API_KEY`` is not set in the environment
-        - ``api_error``         the Gemini call failed (network / auth / quota / etc.)
+        - ``no_api_key``        ``ANTHROPIC_API_KEY`` is not set in the environment
+        - ``api_error``         the Claude call failed (network / auth / quota / etc.)
         - ``invalid_json``      response could not be parsed as JSON
         - ``schema_mismatch``   JSON parsed but is missing required top-level keys
     """
@@ -132,12 +148,12 @@ def audit_lecture(chunks: list[dict[str, Any]]) -> dict[str, Any]:
             "error": "No chunks provided to audit agent.",
         }
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
             "success": False,
             "error_type": "no_api_key",
-            "error": "GEMINI_API_KEY is not set in the environment.",
+            "error": "ANTHROPIC_API_KEY is not set in the environment.",
         }
 
     rendered = "\n\n".join(
@@ -146,10 +162,10 @@ def audit_lecture(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     user_prompt = USER_PROMPT_TEMPLATE.format(chunks=rendered)
 
     try:
-        llm = ChatGoogleGenerativeAI(
+        llm = ChatAnthropic(
             model=MODEL,
-            google_api_key=api_key,
-            temperature=TEMPERATURE,
+            anthropic_api_key=api_key,
+            max_tokens=MAX_TOKENS,
         )
         response = llm.invoke(
             [
@@ -161,7 +177,7 @@ def audit_lecture(chunks: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "success": False,
             "error_type": "api_error",
-            "error": f"Gemini call failed: {exc}",
+            "error": f"Claude Opus 4.7 call failed: {exc}",
         }
 
     raw = (
@@ -176,7 +192,7 @@ def audit_lecture(chunks: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "success": False,
             "error_type": "invalid_json",
-            "error": f"Could not parse Gemini response as JSON: {exc}",
+            "error": f"Could not parse Claude response as JSON: {exc}",
         }
 
     missing = _REQUIRED_KEYS - set(data.keys())
@@ -204,10 +220,10 @@ def _parse_json(raw: str) -> dict[str, Any]:
     if cleaned.startswith("```"):
         nl = cleaned.find("\n")
         if nl != -1:
-            cleaned = cleaned[nl + 1 :]
+            cleaned = cleaned[nl + 1:]
         if cleaned.rstrip().endswith("```"):
             cleaned = cleaned.rstrip()[:-3].rstrip()
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("no JSON object found in response")
-    return json.loads(cleaned[start : end + 1])
+    return json.loads(cleaned[start: end + 1])
